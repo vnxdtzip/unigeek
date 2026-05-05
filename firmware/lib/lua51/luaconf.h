@@ -52,31 +52,35 @@
 
 /* ── Stack / call / buffer limits ────────────────────────────────────── */
 #ifdef BOARD_HAS_PSRAM
-  /* PSRAM boards: relax limits — VM heap lives in PSRAM */
-  #define LUAI_MAXSTACK    800
-  #define LUAI_MAXCSTACK   800
-  #define LUA_MAXCAPTURES  32
-  #define LUAI_MAXVARS     400
-  #define LUAI_MAXUPVALUES 200
+  /* PSRAM boards: 8 MB PSRAM — allow VM to grow into ~2 MB */
+  #define LUAI_MAXSTACK    8000   /* 8000 × 16 B = 128 KB for stack frames */
+  #define LUAI_MAXCSTACK   8000
+  #define LUA_MAXCAPTURES  64
+  #define LUAI_MAXVARS     800
+  #define LUAI_MAXUPVALUES 400
+  #define LUA_BUFFERSIZE   8192
+  #define LUAL_BUFFERSIZE  8192
+  #define LUA_MAXINPUT     8192
+  /* GC: lazy — plenty of headroom */
+  #define LUAI_GCPAUSE  400
+  #define LUAI_GCMUL    400
+  #define LUAI_MAXCALLS   800
+  #define LUAI_MAXCCALLS  800
+#else
+  /* No PSRAM: ~100–120 KB heap budget */
+  #define LUAI_MAXSTACK    600   /* 600 × 8 B = 4.8 KB max stack */
+  #define LUAI_MAXCSTACK   600
+  #define LUA_MAXCAPTURES  24
+  #define LUAI_MAXVARS     300
+  #define LUAI_MAXUPVALUES 80
   #define LUA_BUFFERSIZE   1024
   #define LUAL_BUFFERSIZE  1024
-  #define LUA_MAXINPUT     1024
-  /* GC: less aggressive — more RAM to spare */
-  #define LUAI_GCPAUSE  200
-  #define LUAI_GCMUL    200
-#else
-  /* No PSRAM: keep everything tight */
-  #define LUAI_MAXSTACK    200
-  #define LUAI_MAXCSTACK   200
-  #define LUA_MAXCAPTURES  16
-  #define LUAI_MAXVARS     200
-  #define LUAI_MAXUPVALUES 60
-  #define LUA_BUFFERSIZE   256
-  #define LUAL_BUFFERSIZE  256
-  #define LUA_MAXINPUT     256
-  /* GC: run aggressively to reduce fragmentation */
-  #define LUAI_GCPAUSE  110
-  #define LUAI_GCMUL    150
+  #define LUA_MAXINPUT     512
+  /* GC: moderate — allows ~70–90 KB dynamic heap before collecting */
+  #define LUAI_GCPAUSE  160
+  #define LUAI_GCMUL    175
+  #define LUAI_MAXCALLS   400   /* 400 × 28 B = 11 KB CallInfo */
+  #define LUAI_MAXCCALLS  400
 #endif
 
 #define LUAI_BITSINT     32
@@ -107,10 +111,6 @@
 #define LUALIB_API extern
 #define LUAI_FUNC  extern
 #define LUAI_DATA  extern
-
-/* ── Call depth limits (ldo.c / lgc.c) ───────────────────────────────── */
-#define LUAI_MAXCALLS   200
-#define LUAI_MAXCCALLS  200
 
 /* ── Error handling: setjmp/longjmp ──────────────────────────────────── */
 #define LUAI_THROW(L,c)  longjmp((c)->b, 1)
