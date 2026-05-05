@@ -118,6 +118,8 @@ Multi-tool firmware for ESP32-based handheld devices. Built with PlatformIO + Ar
 - **UART Terminal** — Serial terminal over configurable GPIO pins; set baud rate, RX and TX GPIOs, switch between string and hex send mode (UP/DOWN toggle), send commands via dialog, receive data in real time, and optionally save the session log to storage ([details](knowledge/uart-terminal.md))
 - **Pomodoro Timer** — 25/5-minute focus timer; configurable work (15–60 min) and break (5–15 min) durations; press to pause/resume; speaker beep on phase transition; tracks session count and shows progress bar; keeps display on while running
 - **Random Line Picker** — Select up to 30 text files from `/unigeek/utility/random_line/`, then shuffle and display a random line from the combined pool; press OK to cycle to the next random line
+
+### LUA
 - **Lua Runner** — Run Lua 5.1 scripts from `/unigeek/lua/`; scripts loop frame-by-frame with persistent globals; full display drawing, button input, SD file I/O, and speaker APIs; back button exits at any time ([details](knowledge/lua-runner.md))
 
 ### Games
@@ -370,4 +372,4 @@ This project was built with inspiration and reference from:
 - sticks3 ir receive not functional (RMT/ES8311 conflict); transmit works
 - implement thermal camera
 
-<!-- README last synced at commit: f34aa08 (Lua Runner, Fishing game, Random Line Picker, achievement count 238→244) -->
+<!-- README last synced at commit: 1b933a7 (Lua promoted to main menu; uni.update(), textDatum, PSRAM VM tuning) -->

@@ -6,7 +6,7 @@ export const CATEGORIES = [
   { id: "ble",      label: "BLE",      desc: "Bluetooth Low Energy scanning and spam" },
   { id: "keyboard", label: "HID",      desc: "Keyboard, mouse, and DuckyScript over USB and BLE" },
   { id: "module",   label: "Modules",  desc: "NFC, IR, Sub-GHz, NRF24, GPS" },
-  { id: "utility",  label: "Utility",  desc: "QR, barcode, file manager, TOTP, UART terminal, Lua runner, achievements" },
+  { id: "utility",  label: "Utility",  desc: "QR, barcode, file manager, TOTP, UART terminal, achievements" },
   { id: "game",     label: "Games",    desc: "Lightweight on-device games" },
   { id: "setting",  label: "Settings", desc: "Device preferences and pins" },
 ];
@@ -75,7 +75,7 @@ export const CATALOG = [
   { slug: "uart-terminal",        title: "UART Terminal",       category: "utility",  summary: "Serial terminal over configurable GPIO pins; text/hex send modes, background receive, optional session log save",                hasDetail: true,  stable: true },
   { slug: "pomodoro",             title: "Pomodoro Timer",      category: "utility",  summary: "Focus/break timer with configurable work and break durations, progress bar, speaker notification, and session counter", hasDetail: false, stable: true },
   { slug: "random-line",          title: "Random Line Picker",  category: "utility",  summary: "Select up to 30 text files and shuffle a random line from the combined pool; press OK to cycle",              hasDetail: false, stable: true },
-  { slug: "lua-runner",           title: "Lua Runner",          category: "utility",  summary: "Run Lua 5.1 scripts from SD; frame-loop execution with display, button input, SD file I/O, and speaker APIs", hasDetail: true,  stable: true },
+  { slug: "lua-runner",           title: "Lua Runner",          category: "utility",  summary: "Top-level main menu item; run Lua 5.1 scripts from SD; frame-loop execution with display, button input, SD file I/O, and speaker APIs", hasDetail: true,  stable: true },
 
   // Games
   { slug: "flappy-bird",          title: "Flappy Bird",         category: "game",     summary: "Classic side-scrolling game with randomized pipes and scoring",                                       hasDetail: true,  stable: true },

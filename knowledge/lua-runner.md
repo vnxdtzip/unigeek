@@ -8,7 +8,7 @@ Lua Runner lets you write and run **Lua 5.1 scripts** directly on the device, no
 ## Getting Started
 
 1. Put a `.lua` file in `/unigeek/lua/` on the SD card.
-2. Open **Utility → Lua Runner** on the device.
+2. Open **LUA** from the main menu.
 3. Select the file. The script starts immediately.
 4. Press **Back** at any time — the script catches it and exits cleanly.
 
