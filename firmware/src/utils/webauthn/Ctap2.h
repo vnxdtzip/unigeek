@@ -9,12 +9,13 @@ namespace webauthn {
 // Ctaphid via setHandler() with `Ctap2::dispatch` as the callback.
 //
 // Commands implemented:
-//   0x01 authenticatorMakeCredential   (rk=true → resident/discoverable creds)
-//   0x02 authenticatorGetAssertion     (empty allowList → resident cred lookup)
+//   0x01 authenticatorMakeCredential         (rk=true → resident/discoverable creds)
+//   0x02 authenticatorGetAssertion           (empty allowList → resident cred lookup)
 //   0x04 authenticatorGetInfo
-//   0x06 authenticatorClientPIN        (proto v1, subcommands 1-5 + 9)
+//   0x06 authenticatorClientPIN             (proto v1, subcommands 1-5 + 9)
 //   0x07 authenticatorReset
-//   0x0B authenticatorSelection        (CTAP 2.1 §6.9)
+//   0x0A authenticatorCredentialManagement  (CTAP 2.1 §6.8, subcommands 1-6)
+//   0x0B authenticatorSelection             (CTAP 2.1 §6.9)
 //
 // Commands stubbed:
 //   0x08 authenticatorGetNextAssertion — multi-credential (deferred)
@@ -55,6 +56,8 @@ private:
   static uint16_t _handleReset        (uint8_t* out, uint16_t outMax);
   static uint16_t _handleClientPin    (const uint8_t* req, uint16_t reqLen,
                                        uint8_t* out, uint16_t outMax);
+  static uint16_t _handleCredentialManagement(const uint8_t* req, uint16_t reqLen,
+                                              uint8_t* out, uint16_t outMax);
 };
 
 }  // namespace webauthn

@@ -102,6 +102,13 @@ public:
   static int  enumResidentCreds(const uint8_t rpIdHash[kRpIdHashSize],
                                  ResidentCredCb cb, void* ctx);
 
+  // Enumerate ALL resident creds regardless of RP (for CredentialManagement).
+  static int  enumAllResidentCreds(ResidentCredCb cb, void* ctx);
+
+  // Delete the resident cred whose credId bytes match exactly.
+  // Extracts rpIdHash from credId[16..48] to narrow the search.
+  static bool deleteResidentCredById(const uint8_t credId[kCredIdSize]);
+
   // Delete all resident credential files (called from wipe).
   static void deleteAllResidentCreds();
 

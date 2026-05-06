@@ -50,6 +50,19 @@ struct RkContext {
   CredentialStore::ResidentCredRecord rec;
 };
 
+// ── CredentialManagement enumeration state ─────────────────────────────
+// Persists across Begin → GetNext sequences; reset at each new Begin call.
+struct CmRpEntry {
+  uint8_t rpIdHash[32];
+  char    rpId[128];
+};
+static CmRpEntry s_cm_rp_list[16];
+static int       s_cm_rp_count = 0;
+static int       s_cm_rp_idx   = 0;
+static CredentialStore::ResidentCredRecord s_cm_cred_list[16];
+static int       s_cm_cred_count = 0;
+static int       s_cm_cred_idx   = 0;
+
 // Single-byte CTAP2 status response
 inline uint16_t statusOnly(uint8_t* out, uint8_t status)
 {
@@ -261,15 +274,16 @@ uint16_t Ctap2::_handleGetInfo(const uint8_t*, uint16_t,
   w.putBytes(kAAGUID, sizeof(kAAGUID));
 
   // 0x04 options. Per CTAP2 spec text-key canonical order (length, then byte):
-  //   "rk" (2) < "up" (2, 'r'<'u') < "clientPin" (9) < "pinUvAuthToken" (14)
+  //   "rk"(2) < "up"(2,'r'<'u') < "credMgmt"(8) < "clientPin"(9) < "pinUvAuthToken"(14)
   //   clientPin: present-and-true if a PIN is currently set; present-and-false
   //              if the authenticator supports PIN but none configured.
   //   pinUvAuthToken: present-and-true since we implement proto v1.
   bool pinIsSet = CredentialStore::isPinSet();
   w.putUint(0x04);
-  w.beginMap(4);
+  w.beginMap(5);
     w.putText("rk");              w.putBool(true);
     w.putText("up");              w.putBool(true);
+    w.putText("credMgmt");        w.putBool(true);
     w.putText("clientPin");       w.putBool(pinIsSet);
     w.putText("pinUvAuthToken");  w.putBool(true);
 
@@ -1322,6 +1336,277 @@ uint16_t Ctap2::_handleClientPin(const uint8_t* req, uint16_t reqLen,
   return statusOnly(out, CTAP2_ERR_INVALID_OPTION);
 }
 
+// ── CredentialManagement ──────────────────────────────────────────────
+// CTAP 2.1 §6.8. All subcommands except 0x03/0x05 (continuation) require
+// pinUvAuthParam = LEFT(HMAC-SHA-256(paut_token, subCmd || subCmdParamsCBOR), 16)
+// and PERM_CM in the active token.
+
+uint16_t Ctap2::_handleCredentialManagement(const uint8_t* req, uint16_t reqLen,
+                                             uint8_t* out, uint16_t outMax)
+{
+  CborReader r(req, reqLen);
+  size_t mapCount = 0;
+  if (!r.readMapHeader(&mapCount)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+
+  uint64_t       subCmd           = 0;
+  uint64_t       protocol         = 0;
+  const uint8_t* pinUvAuthParam   = nullptr; size_t pupLen = 0;
+  const uint8_t* subCmdParamsPtr  = nullptr; size_t subCmdParamsLen = 0;
+  uint8_t        scpRpIdHash[32];            bool   gotScpRpIdHash = false;
+  uint8_t        scpCredId[CredentialStore::kCredIdSize]; size_t scpCredIdLen = 0;
+
+  for (size_t i = 0; i < mapCount; i++) {
+    uint64_t k;
+    if (!r.readUint(&k)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+    switch (k) {
+      case 0x01:
+        if (!r.readUint(&subCmd)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+        break;
+      case 0x02: {  // subCommandParams — capture raw CBOR bytes for pinUvAuthParam mac
+        size_t paramStart = r.pos();
+        size_t pmapCount;
+        if (!r.readMapHeader(&pmapCount)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+        for (size_t j = 0; j < pmapCount; j++) {
+          uint64_t pk;
+          if (!r.readUint(&pk)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+          if (pk == 0x01) {
+            if (r.peekMajor() == CBOR_BYTES) {
+              // rpIdHash (32 bytes) for enumerateCredentialsBegin
+              const uint8_t* p; size_t n;
+              if (!r.readBytes(&p, &n)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+              if (n == 32) { memcpy(scpRpIdHash, p, 32); gotScpRpIdHash = true; }
+            } else if (r.peekMajor() == CBOR_MAP) {
+              // credentialDescriptor { "id": credId, "type": "public-key" }
+              size_t cdMap;
+              if (!r.readMapHeader(&cdMap)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+              for (size_t kk = 0; kk < cdMap; kk++) {
+                const char* key; size_t klen;
+                if (!r.readText(&key, &klen)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+                if (klen == 2 && memcmp(key, "id", 2) == 0) {
+                  const uint8_t* p; size_t n;
+                  if (!r.readBytes(&p, &n) || n > CredentialStore::kCredIdSize)
+                    return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+                  memcpy(scpCredId, p, n); scpCredIdLen = n;
+                } else { r.skip(); }
+              }
+            } else { r.skip(); }
+          } else { r.skip(); }
+        }
+        subCmdParamsPtr = req + paramStart;
+        subCmdParamsLen = r.pos() - paramStart;
+        break;
+      }
+      case 0x03:
+        if (!r.readUint(&protocol)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+        break;
+      case 0x04:
+        if (!r.readBytes(&pinUvAuthParam, &pupLen)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+        break;
+      default:
+        r.skip();
+        break;
+    }
+    if (!r.ok()) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+  }
+
+  // Subcommands 0x03 and 0x05 are continuation — no pinUvAuthParam required.
+  bool needPinAuth = (subCmd == 0x01 || subCmd == 0x02 || subCmd == 0x04 || subCmd == 0x06);
+  if (needPinAuth) {
+    if (!pinUvAuthParam || pupLen != 16)
+      return statusOnly(out, CTAP2_ERR_MISSING_PARAMETER);
+    // data = subCmd(1B) || subCmdParamsCBOR
+    static uint8_t cmAuthData[256];
+    cmAuthData[0] = (uint8_t)subCmd;
+    size_t cmAuthLen = 1;
+    if (subCmdParamsPtr && subCmdParamsLen) {
+      if (1 + subCmdParamsLen > sizeof(cmAuthData))
+        return statusOnly(out, CTAP2_ERR_REQUEST_TOO_LARGE);
+      memcpy(cmAuthData + 1, subCmdParamsPtr, subCmdParamsLen);
+      cmAuthLen += subCmdParamsLen;
+    }
+    if (!verifyPinUvAuthParam(protocol, cmAuthData, cmAuthLen, pinUvAuthParam, pupLen)) {
+      WA_LOG("CM fail: pinUvAuthParam mismatch (subCmd=0x%02lx)", (unsigned long)subCmd);
+      return statusOnly(out, CTAP2_ERR_PIN_AUTH_INVALID);
+    }
+    if ((paut_permissions & PERM_CM) == 0) {
+      WA_LOG("CM fail: token lacks CM perm (perms=0x%02x)", (unsigned)paut_permissions);
+      return statusOnly(out, CTAP2_ERR_PIN_AUTH_INVALID);
+    }
+  }
+
+  // ── 0x01 getCredsMetadata ────────────────────────────────────────────
+  if (subCmd == 0x01) {
+    int total = 0;
+    CredentialStore::enumAllResidentCreds(
+      [](const CredentialStore::ResidentCredRecord&, void* p) { (*(int*)p)++; }, &total);
+    int remaining = (int)kMaxResidentCreds - total;
+    if (remaining < 0) remaining = 0;
+    out[0] = CTAP2_OK;
+    CborWriter w(out + 1, outMax - 1);
+    w.beginMap(2);
+      w.putUint(0x01); w.putUint((uint64_t)total);
+      w.putUint(0x02); w.putUint((uint64_t)remaining);
+    if (!w.ok()) return statusOnly(out, CTAP2_ERR_PROCESSING);
+    WA_LOG("CM getCredsMetadata: existing=%d remaining=%d", total, remaining);
+    return (uint16_t)(1 + w.size());
+  }
+
+  // ── 0x02 enumerateRPsBegin ───────────────────────────────────────────
+  if (subCmd == 0x02) {
+    s_cm_rp_count = 0;
+    s_cm_rp_idx   = 0;
+    CredentialStore::enumAllResidentCreds(
+      [](const CredentialStore::ResidentCredRecord& rec, void*) {
+        for (int i = 0; i < s_cm_rp_count; i++) {
+          if (memcmp(s_cm_rp_list[i].rpIdHash, rec.rpIdHash, 32) == 0) return;
+        }
+        if (s_cm_rp_count >= 16) return;
+        memcpy(s_cm_rp_list[s_cm_rp_count].rpIdHash, rec.rpIdHash, 32);
+        strncpy(s_cm_rp_list[s_cm_rp_count].rpId, rec.rpId, 127);
+        s_cm_rp_list[s_cm_rp_count].rpId[127] = '\0';
+        s_cm_rp_count++;
+      }, nullptr);
+    if (s_cm_rp_count == 0) {
+      WA_LOG("CM enumerateRPsBegin: no credentials stored");
+      return statusOnly(out, CTAP2_ERR_NO_CREDENTIALS);
+    }
+    out[0] = CTAP2_OK;
+    CborWriter w(out + 1, outMax - 1);
+    // CTAP 2.1 §6.8.3: 0x03 = rp{id}, 0x04 = rpIDHash, 0x05 = totalRPs.
+    w.beginMap(3);
+      w.putUint(0x03); w.beginMap(1); w.putText("id"); w.putText(s_cm_rp_list[0].rpId);
+      w.putUint(0x04); w.putBytes(s_cm_rp_list[0].rpIdHash, 32);
+      w.putUint(0x05); w.putUint((uint64_t)s_cm_rp_count);
+    if (!w.ok()) return statusOnly(out, CTAP2_ERR_PROCESSING);
+    s_cm_rp_idx = 1;
+    WA_LOG("CM enumerateRPsBegin: totalRPs=%d first=%s", s_cm_rp_count, s_cm_rp_list[0].rpId);
+    return (uint16_t)(1 + w.size());
+  }
+
+  // ── 0x03 enumerateRPsGetNextRP ──────────────────────────────────────
+  if (subCmd == 0x03) {
+    if (s_cm_rp_idx >= s_cm_rp_count)
+      return statusOnly(out, CTAP2_ERR_NO_CREDENTIALS);
+    out[0] = CTAP2_OK;
+    CborWriter w(out + 1, outMax - 1);
+    // CTAP 2.1 §6.8.3: 0x03 = rp{id}, 0x04 = rpIDHash.
+    w.beginMap(2);
+      w.putUint(0x03); w.beginMap(1); w.putText("id"); w.putText(s_cm_rp_list[s_cm_rp_idx].rpId);
+      w.putUint(0x04); w.putBytes(s_cm_rp_list[s_cm_rp_idx].rpIdHash, 32);
+    if (!w.ok()) return statusOnly(out, CTAP2_ERR_PROCESSING);
+    WA_LOG("CM enumerateRPsGetNextRP: idx=%d rpId=%s",
+           s_cm_rp_idx, s_cm_rp_list[s_cm_rp_idx].rpId);
+    s_cm_rp_idx++;
+    return (uint16_t)(1 + w.size());
+  }
+
+  // ── 0x04 enumerateCredentialsBegin ──────────────────────────────────
+  if (subCmd == 0x04) {
+    if (!gotScpRpIdHash) {
+      WA_LOG("CM enumerateCredentialsBegin: missing rpIdHash");
+      return statusOnly(out, CTAP2_ERR_MISSING_PARAMETER);
+    }
+    s_cm_cred_count = 0;
+    s_cm_cred_idx   = 0;
+    CredentialStore::enumResidentCreds(scpRpIdHash,
+      [](const CredentialStore::ResidentCredRecord& rec, void*) {
+        if (s_cm_cred_count >= 16) return;
+        s_cm_cred_list[s_cm_cred_count++] = rec;
+      }, nullptr);
+    if (s_cm_cred_count == 0)
+      return statusOnly(out, CTAP2_ERR_NO_CREDENTIALS);
+
+    const CredentialStore::ResidentCredRecord& c0 = s_cm_cred_list[0];
+    uint8_t priv[32], pub[65];
+    if (!CredentialStore::decodeCredentialId(c0.credId, CredentialStore::kCredIdSize,
+                                             scpRpIdHash, priv))
+      return statusOnly(out, CTAP2_ERR_PROCESSING);
+    bool derivedOk = WebAuthnCrypto::ecdsaP256DerivePub(priv, pub);
+    memset(priv, 0, sizeof(priv));
+    if (!derivedOk) return statusOnly(out, CTAP2_ERR_PROCESSING);
+
+    bool hasName = c0.userName[0] != '\0';
+    out[0] = CTAP2_OK;
+    CborWriter w(out + 1, outMax - 1);
+    w.beginMap(4);
+      w.putUint(0x06);
+        w.beginMap(hasName ? 2 : 1);
+          w.putText("id"); w.putBytes(c0.userId, c0.userIdLen);
+          if (hasName) { w.putText("name"); w.putText(c0.userName); }
+      w.putUint(0x07);
+        w.beginMap(2);
+          w.putText("id");   w.putBytes(c0.credId, CredentialStore::kCredIdSize);
+          w.putText("type"); w.putText("public-key");
+      w.putUint(0x08);
+        w.beginMap(5);
+          w.putUint(1); w.putUint(2);
+          w.putUint(3); w.putInt(-7);
+          w.putInt(-1); w.putUint(1);
+          w.putInt(-2); w.putBytes(pub + 1, 32);
+          w.putInt(-3); w.putBytes(pub + 33, 32);
+      w.putUint(0x09); w.putUint((uint64_t)s_cm_cred_count);
+    if (!w.ok()) return statusOnly(out, CTAP2_ERR_PROCESSING);
+    s_cm_cred_idx = 1;
+    WA_LOG("CM enumerateCredentialsBegin: totalCreds=%d", s_cm_cred_count);
+    return (uint16_t)(1 + w.size());
+  }
+
+  // ── 0x05 enumerateCredentialsGetNextCredential ───────────────────────
+  if (subCmd == 0x05) {
+    if (s_cm_cred_idx >= s_cm_cred_count)
+      return statusOnly(out, CTAP2_ERR_NO_CREDENTIALS);
+    const CredentialStore::ResidentCredRecord& cn = s_cm_cred_list[s_cm_cred_idx];
+    uint8_t priv[32], pub[65];
+    if (!CredentialStore::decodeCredentialId(cn.credId, CredentialStore::kCredIdSize,
+                                             cn.rpIdHash, priv))
+      return statusOnly(out, CTAP2_ERR_PROCESSING);
+    bool derivedOk = WebAuthnCrypto::ecdsaP256DerivePub(priv, pub);
+    memset(priv, 0, sizeof(priv));
+    if (!derivedOk) return statusOnly(out, CTAP2_ERR_PROCESSING);
+
+    bool hasName = cn.userName[0] != '\0';
+    out[0] = CTAP2_OK;
+    CborWriter w(out + 1, outMax - 1);
+    w.beginMap(3);
+      w.putUint(0x06);
+        w.beginMap(hasName ? 2 : 1);
+          w.putText("id"); w.putBytes(cn.userId, cn.userIdLen);
+          if (hasName) { w.putText("name"); w.putText(cn.userName); }
+      w.putUint(0x07);
+        w.beginMap(2);
+          w.putText("id");   w.putBytes(cn.credId, CredentialStore::kCredIdSize);
+          w.putText("type"); w.putText("public-key");
+      w.putUint(0x08);
+        w.beginMap(5);
+          w.putUint(1); w.putUint(2);
+          w.putUint(3); w.putInt(-7);
+          w.putInt(-1); w.putUint(1);
+          w.putInt(-2); w.putBytes(pub + 1, 32);
+          w.putInt(-3); w.putBytes(pub + 33, 32);
+    if (!w.ok()) return statusOnly(out, CTAP2_ERR_PROCESSING);
+    WA_LOG("CM enumerateCredentialsGetNextCredential: idx=%d", s_cm_cred_idx);
+    s_cm_cred_idx++;
+    return (uint16_t)(1 + w.size());
+  }
+
+  // ── 0x06 deleteCredential ────────────────────────────────────────────
+  if (subCmd == 0x06) {
+    if (scpCredIdLen != CredentialStore::kCredIdSize) {
+      WA_LOG("CM deleteCredential: bad credId len=%u", (unsigned)scpCredIdLen);
+      return statusOnly(out, CTAP2_ERR_MISSING_PARAMETER);
+    }
+    if (!CredentialStore::deleteResidentCredById(scpCredId)) {
+      WA_LOG("CM deleteCredential: not found");
+      return statusOnly(out, CTAP2_ERR_NO_CREDENTIALS);
+    }
+    WA_LOG("CM deleteCredential ok");
+    return statusOnly(out, CTAP2_OK);
+  }
+
+  WA_LOG("CM fail: unsupported subCmd=0x%02lx", (unsigned long)subCmd);
+  return statusOnly(out, CTAP2_ERR_INVALID_OPTION);
+}
+
 // ── Reset ──────────────────────────────────────────────────────────────
 
 uint16_t Ctap2::_handleReset(uint8_t* out, uint16_t)
@@ -1371,12 +1656,13 @@ uint16_t Ctap2::dispatch(uint8_t cmd,
 
   uint16_t r;
   switch (ctapCmd) {
-    case CTAP2_GET_INFO:           r = _handleGetInfo(p, pLen, resp, respMax);          break;
-    case CTAP2_MAKE_CREDENTIAL:    r = _handleMakeCredential(p, pLen, resp, respMax);   break;
-    case CTAP2_GET_ASSERTION:      r = _handleGetAssertion(p, pLen, resp, respMax);     break;
-    case CTAP2_RESET:              r = _handleReset(resp, respMax);                     break;
-    case CTAP2_CLIENT_PIN:         r = _handleClientPin(p, pLen, resp, respMax);        break;
-    case CTAP2_GET_NEXT_ASSERTION: r = statusOnly(resp, CTAP2_ERR_NO_OPERATION_PENDING); break;
+    case CTAP2_GET_INFO:                r = _handleGetInfo(p, pLen, resp, respMax);                break;
+    case CTAP2_MAKE_CREDENTIAL:         r = _handleMakeCredential(p, pLen, resp, respMax);         break;
+    case CTAP2_GET_ASSERTION:           r = _handleGetAssertion(p, pLen, resp, respMax);           break;
+    case CTAP2_RESET:                   r = _handleReset(resp, respMax);                           break;
+    case CTAP2_CLIENT_PIN:              r = _handleClientPin(p, pLen, resp, respMax);              break;
+    case CTAP2_CREDENTIAL_MANAGEMENT:   r = _handleCredentialManagement(p, pLen, resp, respMax);   break;
+    case CTAP2_GET_NEXT_ASSERTION:      r = statusOnly(resp, CTAP2_ERR_NO_OPERATION_PENDING);      break;
     case CTAP2_SELECTION:
       // CTAP 2.1 §6.9: pure user-presence gate so the host can pick which
       // connected authenticator the user means. No body, no payload — just

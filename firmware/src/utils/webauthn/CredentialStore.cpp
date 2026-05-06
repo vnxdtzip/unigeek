@@ -444,6 +444,69 @@ int CredentialStore::enumResidentCreds(const uint8_t rpIdHash[kRpIdHashSize],
   return count;
 }
 
+int CredentialStore::enumAllResidentCreds(ResidentCredCb cb, void* ctx)
+{
+  if (!storage() || !storage()->exists(kCredsDir)) return 0;
+
+  constexpr uint8_t kMaxEntries = 64;
+  static IStorage::DirEntry entries[kMaxEntries];
+  uint8_t n = storage()->listDir(kCredsDir, entries, kMaxEntries);
+
+  int count = 0;
+  static ResidentCredRecord rec;
+  static char path[80];
+
+  for (uint8_t i = 0; i < n; i++) {
+    if (entries[i].isDir) continue;
+    const char* name = entries[i].name.c_str();
+    size_t nlen = strlen(name);
+    if (nlen < 4 || strcmp(name + nlen - 4, ".bin") != 0) continue;
+    snprintf(path, sizeof(path), "%s/%s", kCredsDir, name);
+    if (!readBytes(path, reinterpret_cast<uint8_t*>(&rec), sizeof(rec))) continue;
+    count++;
+    cb(rec, ctx);
+  }
+  memset(&rec, 0, sizeof(rec));
+  return count;
+}
+
+bool CredentialStore::deleteResidentCredById(const uint8_t credId[kCredIdSize])
+{
+  if (!storage() || !storage()->exists(kCredsDir)) return false;
+
+  // rpIdHash is embedded at credId[16..48]
+  const uint8_t* rpIdHash = credId + 16;
+
+  char prefix[17];
+  for (int i = 0; i < 8; i++) {
+    prefix[i * 2]     = kHex[rpIdHash[i] >> 4];
+    prefix[i * 2 + 1] = kHex[rpIdHash[i] & 0x0F];
+  }
+  prefix[16] = '\0';
+
+  constexpr uint8_t kMaxEntries = 64;
+  static IStorage::DirEntry entries[kMaxEntries];
+  uint8_t n = storage()->listDir(kCredsDir, entries, kMaxEntries);
+
+  static ResidentCredRecord rec;
+  static char path[80];
+
+  for (uint8_t i = 0; i < n; i++) {
+    if (entries[i].isDir) continue;
+    if (strncmp(entries[i].name.c_str(), prefix, 16) != 0) continue;
+    snprintf(path, sizeof(path), "%s/%s", kCredsDir, entries[i].name.c_str());
+    if (!readBytes(path, reinterpret_cast<uint8_t*>(&rec), sizeof(rec))) continue;
+    if (memcmp(rec.credId, credId, kCredIdSize) != 0) continue;
+    bool ok = storage()->deleteFile(path);
+    memset(&rec, 0, sizeof(rec));
+    WA_LOG("CS deleteResidentCredById %s -> %d", entries[i].name.c_str(), (int)ok);
+    return ok;
+  }
+  memset(&rec, 0, sizeof(rec));
+  WA_LOG("CS deleteResidentCredById: cred not found");
+  return false;
+}
+
 void CredentialStore::deleteAllResidentCreds()
 {
   if (!storage() || !storage()->exists(kCredsDir)) return;

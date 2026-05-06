@@ -57,13 +57,14 @@ enum CtaphidErr : uint8_t {
 
 // ── CTAP2 ─────────────────────────────────────────────────────────────────
 enum Ctap2Cmd : uint8_t {
-  CTAP2_MAKE_CREDENTIAL    = 0x01,
-  CTAP2_GET_ASSERTION      = 0x02,
-  CTAP2_GET_INFO           = 0x04,
-  CTAP2_CLIENT_PIN         = 0x06,
-  CTAP2_RESET              = 0x07,
-  CTAP2_GET_NEXT_ASSERTION = 0x08,
-  CTAP2_SELECTION          = 0x0B,
+  CTAP2_MAKE_CREDENTIAL        = 0x01,
+  CTAP2_GET_ASSERTION          = 0x02,
+  CTAP2_GET_INFO               = 0x04,
+  CTAP2_CLIENT_PIN             = 0x06,
+  CTAP2_RESET                  = 0x07,
+  CTAP2_GET_NEXT_ASSERTION     = 0x08,
+  CTAP2_CREDENTIAL_MANAGEMENT  = 0x0A,
+  CTAP2_SELECTION              = 0x0B,
 };
 
 // CTAP2 status codes (sent as the first byte of every CBOR response)
