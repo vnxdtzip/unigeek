@@ -267,6 +267,19 @@ void UartTerminalScreen::_startTerminal() {
   snprintf(info, sizeof(info), "RX:%d TX:%d  %d baud", _rxPin, _txPin, _baud);
   _log.addLine(info, TFT_DARKGREY);
 
+  {
+    const char* modeName;
+    switch (_saveMode) {
+      case SAVE_FILE:       modeName = "File";           break;
+      case SAVE_STREAM_AP:  modeName = "Stream AP";      break;
+      case SAVE_STREAM_NET: modeName = "Stream Network"; break;
+      default:              modeName = "None";           break;
+    }
+    char modeInfo[32];
+    snprintf(modeInfo, sizeof(modeInfo), "Log Mode: %s", modeName);
+    _log.addLine(modeInfo, TFT_DARKGREY);
+  }
+
   if      (_saveMode == SAVE_FILE)   _openLog();
   else if (_saveMode != SAVE_NO)     _startWifiStream();
 
@@ -356,7 +369,7 @@ void UartTerminalScreen::_openLog() {
   _logFile = Uni.Storage->open(path.c_str(), "w");
   char buf[40];
   if (_logFile) {
-    snprintf(buf, sizeof(buf), "Log -> %s.log", _saveFilename.c_str());
+    snprintf(buf, sizeof(buf), "Filename: %s.log", _saveFilename.c_str());
     _log.addLine(buf, TFT_DARKGREY);
     int n = Achievement.inc("uart_log_saved");
     if (n == 1) Achievement.unlock("uart_log_saved");
@@ -380,8 +393,9 @@ void UartTerminalScreen::_startWifiStream() {
     _tcpServer.begin();
     _wifiStarted = true;
     char buf[56];
-    snprintf(buf, sizeof(buf), "AP: %s  → %s:%d",
-             _apName.c_str(), WiFi.softAPIP().toString().c_str(), TCP_PORT);
+    snprintf(buf, sizeof(buf), "AP: %s", _apName.c_str());
+    _log.addLine(buf, TFT_DARKGREY);
+    snprintf(buf, sizeof(buf), "Stream: nc %s:%d", WiFi.softAPIP().toString().c_str(), TCP_PORT);
     _log.addLine(buf, TFT_DARKGREY);
     int na = Achievement.inc("uart_stream_ap");
     if (na == 1) Achievement.unlock("uart_stream_ap");
@@ -394,8 +408,9 @@ void UartTerminalScreen::_startWifiStream() {
     _tcpServer.begin();
     _wifiStarted = true;
     char buf[56];
-    snprintf(buf, sizeof(buf), "Net: %s  → %s:%d",
-             _networkSSID.c_str(), WiFi.localIP().toString().c_str(), TCP_PORT);
+    snprintf(buf, sizeof(buf), "Network: %s", _networkSSID.c_str());
+    _log.addLine(buf, TFT_DARKGREY);
+    snprintf(buf, sizeof(buf), "Stream: nc %s:%d", WiFi.localIP().toString().c_str(), TCP_PORT);
     _log.addLine(buf, TFT_DARKGREY);
     int nn = Achievement.inc("uart_stream_net");
     if (nn == 1) Achievement.unlock("uart_stream_net");
@@ -443,27 +458,15 @@ void UartTerminalScreen::_statusBarCb(Sprite& sp, int barY, int w, void* user) {
   auto* s = static_cast<UartTerminalScreen*>(user);
   sp.setTextSize(1);
 
-  char left[32];
-  snprintf(left, sizeof(left), "%d bd R:%d T:%d", s->_baud, s->_rxPin, s->_txPin);
+  char rx[5], tx[5];
+  if (s->_rxPin >= 0) snprintf(rx, sizeof(rx), "%d", s->_rxPin); else strcpy(rx, "-");
+  if (s->_txPin >= 0) snprintf(tx, sizeof(tx), "%d", s->_txPin); else strcpy(tx, "-");
+  char left[28];
+  snprintf(left, sizeof(left), "B%dR%sT%s", s->_baud, rx, tx);
+
   sp.setTextDatum(TL_DATUM);
   sp.setTextColor(TFT_DARKGREY);
   sp.drawString(left, 2, barY);
-
-  // mode label — centre-ish, after left text
-  if (s->_wifiStarted) {
-    IPAddress ip = s->_apStarted ? WiFi.softAPIP() : WiFi.localIP();
-    char mid[32];
-    snprintf(mid, sizeof(mid), "STRM:%s:%d", ip.toString().c_str(), TCP_PORT);
-    sp.setTextDatum(TL_DATUM);
-    sp.setTextColor(TFT_GREEN);
-    sp.drawString(mid, sp.textWidth(left) + 6, barY);
-  } else if (s->_saveMode == SAVE_FILE && s->_saveFilename.length() > 0) {
-    char mid[36];
-    snprintf(mid, sizeof(mid), "LOG:%s", s->_saveFilename.c_str());
-    sp.setTextDatum(TL_DATUM);
-    sp.setTextColor(TFT_CYAN);
-    sp.drawString(mid, sp.textWidth(left) + 6, barY);
-  }
 
   sp.setTextDatum(TR_DATUM);
   sp.setTextColor(s->_hexMode ? TFT_YELLOW : TFT_DARKGREY);
