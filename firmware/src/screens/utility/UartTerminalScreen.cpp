@@ -440,21 +440,31 @@ void UartTerminalScreen::_broadcastLine(const char* line) {
 
 void UartTerminalScreen::_statusBarCb(Sprite& sp, int barY, int w, void* user) {
   auto* s = static_cast<UartTerminalScreen*>(user);
-  char buf[48];
-  snprintf(buf, sizeof(buf), "%d bd  RX:%d TX:%d", s->_baud, s->_rxPin, s->_txPin);
   sp.setTextSize(1);
+
+  char left[32];
+  snprintf(left, sizeof(left), "%d bd R:%d T:%d", s->_baud, s->_rxPin, s->_txPin);
   sp.setTextDatum(TL_DATUM);
   sp.setTextColor(TFT_DARKGREY);
-  sp.drawString(buf, 2, barY);
-  sp.setTextDatum(TR_DATUM);
+  sp.drawString(left, 2, barY);
+
+  // mode label — centre-ish, after left text
   if (s->_wifiStarted) {
     IPAddress ip = s->_apStarted ? WiFi.softAPIP() : WiFi.localIP();
-    char ipBuf[28];
-    snprintf(ipBuf, sizeof(ipBuf), ":%d %s", TCP_PORT, ip.toString().c_str());
+    char mid[32];
+    snprintf(mid, sizeof(mid), "STRM:%s:%d", ip.toString().c_str(), TCP_PORT);
+    sp.setTextDatum(TL_DATUM);
     sp.setTextColor(TFT_GREEN);
-    sp.drawString(ipBuf, w - 2, barY);
-  } else {
-    sp.setTextColor(s->_hexMode ? TFT_YELLOW : TFT_DARKGREY);
-    sp.drawString(s->_hexMode ? "HEX" : "STR", w - 2, barY);
+    sp.drawString(mid, sp.textWidth(left) + 6, barY);
+  } else if (s->_saveMode == SAVE_FILE && s->_saveFilename.length() > 0) {
+    char mid[36];
+    snprintf(mid, sizeof(mid), "LOG:%s", s->_saveFilename.c_str());
+    sp.setTextDatum(TL_DATUM);
+    sp.setTextColor(TFT_CYAN);
+    sp.drawString(mid, sp.textWidth(left) + 6, barY);
   }
+
+  sp.setTextDatum(TR_DATUM);
+  sp.setTextColor(s->_hexMode ? TFT_YELLOW : TFT_DARKGREY);
+  sp.drawString(s->_hexMode ? "HEX" : "STR", w - 2, barY);
 }
