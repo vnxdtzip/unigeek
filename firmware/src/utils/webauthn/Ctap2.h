@@ -14,11 +14,12 @@ namespace webauthn {
 //   0x04 authenticatorGetInfo
 //   0x06 authenticatorClientPIN             (proto v1, subcommands 1-5 + 9)
 //   0x07 authenticatorReset
+//   0x08 authenticatorGetNextAssertion      (multi-cred discoverable signin)
 //   0x0A authenticatorCredentialManagement  (CTAP 2.1 §6.8, subcommands 1-6)
 //   0x0B authenticatorSelection             (CTAP 2.1 §6.9)
 //
 // Commands stubbed:
-//   0x08 authenticatorGetNextAssertion — multi-credential (deferred)
+//   (none)
 //
 // User presence (UP): wired to a user-presence callback installed by the
 // WebAuthn screen via setUserPresenceFn(); auto-asserted when callback is null.
@@ -53,6 +54,7 @@ private:
                                         uint8_t* out, uint16_t outMax);
   static uint16_t _handleGetAssertion (const uint8_t* req, uint16_t reqLen,
                                        uint8_t* out, uint16_t outMax);
+  static uint16_t _handleGetNextAssertion(uint8_t* out, uint16_t outMax);
   static uint16_t _handleReset        (uint8_t* out, uint16_t outMax);
   static uint16_t _handleClientPin    (const uint8_t* req, uint16_t reqLen,
                                        uint8_t* out, uint16_t outMax);

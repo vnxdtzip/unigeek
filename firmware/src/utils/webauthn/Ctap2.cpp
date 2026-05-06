@@ -43,12 +43,30 @@ constexpr uint8_t FLAG_UV = 0x04;
 constexpr uint8_t FLAG_AT = 0x40;
 constexpr uint8_t FLAG_ED = 0x80;  // extension data present
 
-// Context for resident-cred enumeration inside GetAssertion.
-struct RkContext {
-  int  count;
-  bool found;
-  CredentialStore::ResidentCredRecord rec;
+// ── GetNextAssertion pending state ─────────────────────────────────────
+// Populated by GetAssertion when numberOfCredentials > 1; consumed by
+// successive GetNextAssertion calls. Cleared at the top of dispatch for
+// any non-GNA command, after the last cred, or after 30 s idle.
+//
+// The cred list is also used as the working buffer for the *first* GA
+// resident-cred enumeration, so it's populated even when only one cred
+// matches (in which case `active` stays false and credIdx never moves).
+struct GnaState {
+  bool      active;
+  uint32_t  lastMs;
+  uint8_t   clientDataHash[32];
+  uint8_t   rpIdHash[32];
+  uint8_t   flags;                  // FLAG_UP | FLAG_UV (FLAG_ED added per-cred)
+  CredentialStore::ResidentCredRecord creds[8];
+  int       credCount;
+  int       credIdx;
+  // hmac-secret session state (saved by GA, re-used per cred in GNA).
+  bool      hmacEnabled;
+  uint8_t   hmacShared[32];
+  uint8_t   hmacSaltDec[64];
+  size_t    hmacSaltLen;            // 32 or 64
 };
+static GnaState s_gna;
 
 // ── CredentialManagement enumeration state ─────────────────────────────
 // Persists across Begin → GetNext sequences; reset at each new Begin call.
@@ -787,36 +805,38 @@ uint16_t Ctap2::_handleGetAssertion(const uint8_t* req, uint16_t reqLen,
       WA_LOG("GA fail: no matching cred in allowList (rpId=%s)", rpId);
       return statusOnly(out, CTAP2_ERR_NO_CREDENTIALS);
     }
-    // Discoverable credential path — walk the resident cred store.
-    static RkContext s_rk;
-    memset(&s_rk, 0, sizeof(s_rk));
+    // Discoverable credential path — enumerate ALL matching resident creds
+    // into s_gna.creds[] so we can serve them via GetNextAssertion if more
+    // than one matches. The first one is used for this GA response.
+    s_gna.credCount = 0;
     CredentialStore::enumResidentCreds(rpIdHash,
-      [](const CredentialStore::ResidentCredRecord& r, void* p) {
-        auto* c = static_cast<RkContext*>(p);
-        c->count++;
-        if (!c->found) { c->rec = r; c->found = true; }
-      }, &s_rk);
+      [](const CredentialStore::ResidentCredRecord& rec, void*) {
+        constexpr int kCap = (int)(sizeof(s_gna.creds) / sizeof(s_gna.creds[0]));
+        if (s_gna.credCount >= kCap) return;
+        s_gna.creds[s_gna.credCount++] = rec;
+      }, nullptr);
 
-    if (!s_rk.found) {
+    if (s_gna.credCount == 0) {
       WA_LOG("GA fail: no resident creds for rpId=%s", rpId);
+      s_gna.active = false;
       return statusOnly(out, CTAP2_ERR_NO_CREDENTIALS);
     }
-    if (!CredentialStore::decodeCredentialId(s_rk.rec.credId,
+    const CredentialStore::ResidentCredRecord& c0 = s_gna.creds[0];
+    if (!CredentialStore::decodeCredentialId(c0.credId,
                                              CredentialStore::kCredIdSize,
                                              rpIdHash, winnerPriv)) {
       WA_LOG("GA fail: decodeCredentialId failed for resident cred");
-      memset(&s_rk, 0, sizeof(s_rk));
+      s_gna.active = false;
       return statusOnly(out, CTAP2_ERR_NO_CREDENTIALS);
     }
-    memcpy(winnerCredId, s_rk.rec.credId, CredentialStore::kCredIdSize);
+    memcpy(winnerCredId, c0.credId, CredentialStore::kCredIdSize);
     winnerCredIdLen = CredentialStore::kCredIdSize;
     isResident   = true;
-    resUserIdLen = s_rk.rec.userIdLen;
-    memcpy(resUserId, s_rk.rec.userId, resUserIdLen);
-    memcpy(resUserName, s_rk.rec.userName, sizeof(resUserName));
-    numCreds = s_rk.count;
+    resUserIdLen = c0.userIdLen;
+    memcpy(resUserId, c0.userId, resUserIdLen);
+    memcpy(resUserName, c0.userName, sizeof(resUserName));
+    numCreds = s_gna.credCount;
     found    = true;
-    memset(&s_rk, 0, sizeof(s_rk));
     WA_LOG("GA: resident cred found (numCreds=%d)", numCreds);
   }
 
@@ -863,30 +883,33 @@ uint16_t Ctap2::_handleGetAssertion(const uint8_t* req, uint16_t reqLen,
       return statusOnly(out, CTAP2_ERR_INVALID_OPTION);
     }
 
-    // Proto v1 sharedSecret = SHA-256(ECDH(devPriv, hostPub).X)
-    uint8_t sharedX[32], shared[32];
+    // Proto v1 sharedSecret = SHA-256(ECDH(devPriv, hostPub).X). Stash the
+    // result in s_gna.hmacShared so GetNextAssertion can re-encrypt per-cred
+    // outputs with the same shared secret.
+    uint8_t sharedX[32];
     if (!WebAuthnCrypto::ecdhComputeSharedX(hmacPeerPub, sharedX)) {
       WA_LOG("GA fail: hmac-secret ECDH compute");
       return statusOnly(out, CTAP2_ERR_PROCESSING);
     }
-    WebAuthnCrypto::sha256(sharedX, 32, shared);
+    WebAuthnCrypto::sha256(sharedX, 32, s_gna.hmacShared);
 
     // Verify saltAuth = HMAC(shared, saltEnc) truncated to 16 B (proto v1)
     uint8_t calcAuth[32];
-    WebAuthnCrypto::hmacSha256(shared, 32, hmacSaltEnc, hmacSaltEncLen, calcAuth);
+    WebAuthnCrypto::hmacSha256(s_gna.hmacShared, 32, hmacSaltEnc, hmacSaltEncLen, calcAuth);
     if (hmacSaltAuthLen != 16 || memcmp(calcAuth, hmacSaltAuth, 16) != 0) {
       WA_LOG("GA fail: hmac-secret saltAuth mismatch");
       return statusOnly(out, CTAP2_ERR_INVALID_OPTION);
     }
 
-    // Decrypt saltEnc with zero IV → salt_dec
-    uint8_t salt_dec[64] = {0};
+    // Decrypt saltEnc with zero IV → s_gna.hmacSaltDec (also re-used in GNA).
     static const uint8_t zeroIv[16] = {0};
-    if (!WebAuthnCrypto::aes256CbcDecrypt(shared, zeroIv,
-                                          hmacSaltEnc, hmacSaltEncLen, salt_dec)) {
+    memset(s_gna.hmacSaltDec, 0, sizeof(s_gna.hmacSaltDec));
+    if (!WebAuthnCrypto::aes256CbcDecrypt(s_gna.hmacShared, zeroIv,
+                                          hmacSaltEnc, hmacSaltEncLen, s_gna.hmacSaltDec)) {
       WA_LOG("GA fail: hmac-secret saltEnc decrypt");
       return statusOnly(out, CTAP2_ERR_PROCESSING);
     }
+    s_gna.hmacSaltLen = hmacSaltEncLen;
 
     // Per-cred secret (64 B; we use the no-UV half since no PIN/UV state)
     uint8_t cred_random[64];
@@ -898,13 +921,13 @@ uint16_t Ctap2::_handleGetAssertion(const uint8_t* req, uint16_t reqLen,
 
     // out_plain[i] = HMAC(variant, salt_dec[i*32..(i+1)*32])
     uint8_t out_plain[64];
-    WebAuthnCrypto::hmacSha256(variant, 32, salt_dec, 32, out_plain);
+    WebAuthnCrypto::hmacSha256(variant, 32, s_gna.hmacSaltDec, 32, out_plain);
     if (hmacSaltEncLen == 64) {
-      WebAuthnCrypto::hmacSha256(variant, 32, salt_dec + 32, 32, out_plain + 32);
+      WebAuthnCrypto::hmacSha256(variant, 32, s_gna.hmacSaltDec + 32, 32, out_plain + 32);
     }
 
     // Encrypt back with the shared key, zero IV
-    if (!WebAuthnCrypto::aes256CbcEncrypt(shared, zeroIv, out_plain,
+    if (!WebAuthnCrypto::aes256CbcEncrypt(s_gna.hmacShared, zeroIv, out_plain,
                                           hmacSaltEncLen, hmacResp)) {
       WA_LOG("GA fail: hmac-secret response encrypt");
       return statusOnly(out, CTAP2_ERR_PROCESSING);
@@ -996,10 +1019,169 @@ uint16_t Ctap2::_handleGetAssertion(const uint8_t* req, uint16_t reqLen,
 
   if (!w.ok()) {
     WA_LOG("GA fail: response CBOR encoder overflow (outMax=%u)", (unsigned)outMax);
+    s_gna.active = false;
     return statusOnly(out, CTAP2_ERR_PROCESSING);
   }
+
+  // Arm GetNextAssertion if more creds match. The cred list, hmacShared and
+  // hmacSaltDec were already populated above; the rest is bookkeeping.
+  if (isResident && numCreds > 1) {
+    s_gna.active      = true;
+    s_gna.lastMs      = (uint32_t)millis();
+    s_gna.credIdx     = 1;        // index 0 was returned in this GA
+    s_gna.flags       = gaFlags & ~FLAG_ED;  // FLAG_ED added per-cred
+    s_gna.hmacEnabled = (hmacRespLen > 0);
+    memcpy(s_gna.clientDataHash, clientDataHash, 32);
+    memcpy(s_gna.rpIdHash, rpIdHash, 32);
+    WA_LOG("GA: GNA armed credIdx=1/%d hmac=%d", numCreds, (int)s_gna.hmacEnabled);
+  } else {
+    s_gna.active = false;
+  }
+
   WA_LOG("GA ok: respLen=%u resident=%d numCreds=%d",
          (unsigned)(1 + w.size()), (int)isResident, numCreds);
+  return (uint16_t)(1 + w.size());
+}
+
+// ── GetNextAssertion ──────────────────────────────────────────────────
+// CTAP 2.1 §6.3. No request body — uses cached state from the prior
+// authenticatorGetAssertion. Returns one signed assertion per call until
+// all matching resident creds are exhausted (or 30 s idle / canceled).
+
+uint16_t Ctap2::_handleGetNextAssertion(uint8_t* out, uint16_t outMax)
+{
+  if (!s_gna.active) {
+    WA_LOG("GNA fail: no pending session");
+    return statusOnly(out, CTAP2_ERR_NOT_ALLOWED);
+  }
+  uint32_t now = (uint32_t)millis();
+  if (now - s_gna.lastMs > 30000) {
+    WA_LOG("GNA fail: 30 s timeout");
+    s_gna.active = false;
+    return statusOnly(out, CTAP2_ERR_NOT_ALLOWED);
+  }
+  if (s_gna.credIdx >= s_gna.credCount) {
+    WA_LOG("GNA fail: no more creds (idx=%d count=%d)",
+           s_gna.credIdx, s_gna.credCount);
+    s_gna.active = false;
+    return statusOnly(out, CTAP2_ERR_NOT_ALLOWED);
+  }
+
+  const CredentialStore::ResidentCredRecord& c = s_gna.creds[s_gna.credIdx];
+
+  uint8_t priv[32];
+  if (!CredentialStore::decodeCredentialId(c.credId, CredentialStore::kCredIdSize,
+                                           s_gna.rpIdHash, priv)) {
+    WA_LOG("GNA fail: decodeCredentialId");
+    s_gna.active = false;
+    return statusOnly(out, CTAP2_ERR_PROCESSING);
+  }
+
+  // hmac-secret per-cred: derive cred_random from this cred's credId, then
+  // re-encrypt with the GA-cached shared secret + zero IV.
+  static uint8_t gnaHmacResp[64];
+  size_t  gnaHmacRespLen = 0;
+  if (s_gna.hmacEnabled) {
+    uint8_t cred_random[64];
+    if (!WebAuthnCrypto::deriveHmacSecret(c.credId, CredentialStore::kCredIdSize,
+                                          cred_random)) {
+      memset(priv, 0, sizeof(priv));
+      s_gna.active = false;
+      return statusOnly(out, CTAP2_ERR_PROCESSING);
+    }
+    const uint8_t* variant = cred_random;  // no-UV half (matches GA)
+    uint8_t out_plain[64];
+    WebAuthnCrypto::hmacSha256(variant, 32, s_gna.hmacSaltDec, 32, out_plain);
+    if (s_gna.hmacSaltLen == 64) {
+      WebAuthnCrypto::hmacSha256(variant, 32, s_gna.hmacSaltDec + 32, 32, out_plain + 32);
+    }
+    static const uint8_t zeroIv[16] = {0};
+    bool encOk = WebAuthnCrypto::aes256CbcEncrypt(s_gna.hmacShared, zeroIv,
+                                                  out_plain, s_gna.hmacSaltLen,
+                                                  gnaHmacResp);
+    memset(cred_random, 0, sizeof(cred_random));
+    if (!encOk) {
+      memset(priv, 0, sizeof(priv));
+      s_gna.active = false;
+      return statusOnly(out, CTAP2_ERR_PROCESSING);
+    }
+    gnaHmacRespLen = s_gna.hmacSaltLen;
+  }
+
+  // Build extensions CBOR (only if hmac-secret active).
+  static uint8_t gnaExt[128];
+  size_t  gnaExtLen = 0;
+  uint8_t flags = s_gna.flags;
+  if (gnaHmacRespLen) {
+    CborWriter we(gnaExt, sizeof(gnaExt));
+    we.beginMap(1);
+      we.putText("hmac-secret"); we.putBytes(gnaHmacResp, gnaHmacRespLen);
+    if (!we.ok()) {
+      memset(priv, 0, sizeof(priv));
+      s_gna.active = false;
+      return statusOnly(out, CTAP2_ERR_PROCESSING);
+    }
+    gnaExtLen = we.size();
+    flags |= FLAG_ED;
+  }
+
+  uint32_t counter = CredentialStore::bumpCounter();
+  static uint8_t authData[256];
+  size_t authLen = writeAuthData(authData, sizeof(authData), s_gna.rpIdHash,
+                                 flags, counter, nullptr, 0,
+                                 gnaExtLen ? gnaExt : nullptr, gnaExtLen);
+  if (!authLen) {
+    memset(priv, 0, sizeof(priv));
+    s_gna.active = false;
+    return statusOnly(out, CTAP2_ERR_PROCESSING);
+  }
+
+  static uint8_t sigInput[256 + 32];
+  size_t sigInputLen = authLen + 32;
+  if (sigInputLen > sizeof(sigInput)) {
+    memset(priv, 0, sizeof(priv));
+    s_gna.active = false;
+    return statusOnly(out, CTAP2_ERR_PROCESSING);
+  }
+  memcpy(sigInput, authData, authLen);
+  memcpy(sigInput + authLen, s_gna.clientDataHash, 32);
+  uint8_t sigHash[32];
+  WebAuthnCrypto::sha256(sigInput, sigInputLen, sigHash);
+  uint8_t sigDer[72]; size_t sigLen = 0;
+  bool signedOk = WebAuthnCrypto::ecdsaP256SignDer(priv, sigHash, sigDer, &sigLen);
+  memset(priv, 0, sizeof(priv));
+  if (!signedOk) {
+    s_gna.active = false;
+    return statusOnly(out, CTAP2_ERR_PROCESSING);
+  }
+
+  bool hasUserName = c.userName[0] != '\0';
+  out[0] = CTAP2_OK;
+  CborWriter w(out + 1, outMax - 1);
+  // Same shape as GA but no 0x05 numberOfCredentials (host already knows).
+  w.beginMap(4);
+    w.putUint(0x01);
+      w.beginMap(2);
+        w.putText("id");   w.putBytes(c.credId, CredentialStore::kCredIdSize);
+        w.putText("type"); w.putText("public-key");
+    w.putUint(0x02); w.putBytes(authData, authLen);
+    w.putUint(0x03); w.putBytes(sigDer, sigLen);
+    w.putUint(0x04);
+      w.beginMap(hasUserName ? 2 : 1);
+        w.putText("id");   w.putBytes(c.userId, c.userIdLen);
+        if (hasUserName) { w.putText("name"); w.putText(c.userName); }
+
+  if (!w.ok()) {
+    s_gna.active = false;
+    return statusOnly(out, CTAP2_ERR_PROCESSING);
+  }
+
+  s_gna.credIdx++;
+  s_gna.lastMs = now;
+  if (s_gna.credIdx >= s_gna.credCount) s_gna.active = false;
+
+  WA_LOG("GNA ok: idx=%d/%d respLen=%u",
+         s_gna.credIdx, s_gna.credCount, (unsigned)(1 + w.size()));
   return (uint16_t)(1 + w.size());
 }
 
@@ -1654,6 +1836,12 @@ uint16_t Ctap2::dispatch(uint8_t cmd,
   uint16_t pLen    = (uint16_t)(reqLen - 1);
   WA_LOG("CTAP2 cmd=0x%02x payloadLen=%u", ctapCmd, pLen);
 
+  // Per CTAP 2.1 §6.3, any CTAP2 command other than GetNextAssertion
+  // cancels a pending multi-cred discoverable signin session.
+  if (ctapCmd != CTAP2_GET_NEXT_ASSERTION) {
+    s_gna.active = false;
+  }
+
   uint16_t r;
   switch (ctapCmd) {
     case CTAP2_GET_INFO:                r = _handleGetInfo(p, pLen, resp, respMax);                break;
@@ -1662,7 +1850,7 @@ uint16_t Ctap2::dispatch(uint8_t cmd,
     case CTAP2_RESET:                   r = _handleReset(resp, respMax);                           break;
     case CTAP2_CLIENT_PIN:              r = _handleClientPin(p, pLen, resp, respMax);              break;
     case CTAP2_CREDENTIAL_MANAGEMENT:   r = _handleCredentialManagement(p, pLen, resp, respMax);   break;
-    case CTAP2_GET_NEXT_ASSERTION:      r = statusOnly(resp, CTAP2_ERR_NO_OPERATION_PENDING);      break;
+    case CTAP2_GET_NEXT_ASSERTION:      r = _handleGetNextAssertion(resp, respMax);                break;
     case CTAP2_SELECTION:
       // CTAP 2.1 §6.9: pure user-presence gate so the host can pick which
       // connected authenticator the user means. No body, no payload — just
