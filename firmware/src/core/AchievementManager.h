@@ -248,6 +248,8 @@ public:
       { 214, "uart_receive_data",         "Signal Caught",          9, 1, "Receive data over UART" },
       { 215, "uart_log_saved",            "Terminal Logger",        9, 0, "Save a UART session log to storage" },
       { 216, "uart_send_command",         "Terminal Operator",      9, 0, "Send a command over UART" },
+      { 244, "uart_stream_ap",            "Air Terminal",           9, 0, "Stream UART data over a WiFi access point" },
+      { 245, "uart_stream_net",           "Wire Tap Pro",           9, 0, "Stream UART data over an existing WiFi network" },
       { 217, "pomodoro_first",            "Focus Mode",             9, 0, "Complete your first Pomodoro work session" },
       { 218, "pomodoro_5",                "Flow State",             9, 1, "Complete 5 Pomodoro work sessions" },
       { 219, "pomodoro_20",               "Deep Worker",            9, 2, "Complete 20 Pomodoro work sessions" },

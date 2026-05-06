@@ -9,6 +9,7 @@
 #include "ui/actions/InputTextAction.h"
 #include "ui/actions/InputNumberAction.h"
 #include "ui/actions/ShowStatusAction.h"
+#include "utils/network/WifiUtility.h"
 #include <time.h>
 #include <driver/gpio.h>
 
@@ -17,6 +18,8 @@
 UartTerminalScreen::~UartTerminalScreen() {
   if (_taskHandle) { vTaskDelete(_taskHandle); _taskHandle = nullptr; }
   if (_mutex)      { vSemaphoreDelete(_mutex); _mutex = nullptr; }
+  _closeLog();
+  _stopWifiStream();
   if (_serialRunning) _serial.end();
 }
 
@@ -28,13 +31,7 @@ void UartTerminalScreen::onInit() {
   _rxPin = PinConfig.getInt(PIN_CONFIG_EXT_SCL, PIN_CONFIG_EXT_SCL_DEFAULT);
   _txPin = PinConfig.getInt(PIN_CONFIG_EXT_SDA, PIN_CONFIG_EXT_SDA_DEFAULT);
   _updateLabels();
-
-  _configItems[0] = {"Baud Rate",  _baudLabel};
-  _configItems[1] = {"RX GPIO",    _rxLabel};
-  _configItems[2] = {"TX GPIO",    _txLabel};
-  _configItems[3] = {"Save File",  _saveLabel};
-  _configItems[4] = {"Start",      nullptr};
-  setItems(_configItems, 5);
+  _rebuildItems();
 }
 
 void UartTerminalScreen::onUpdate() {
@@ -45,6 +42,7 @@ void UartTerminalScreen::onUpdate() {
 
   // STATE_RUNNING
   _drainShared();
+  _acceptClients();
 
   if (millis() - _lastDrawMs >= 200) {
     _lastDrawMs = millis();
@@ -54,7 +52,8 @@ void UartTerminalScreen::onUpdate() {
   if (!Uni.Nav->wasPressed()) return;
   auto dir = Uni.Nav->readDirection();
   if (dir == INavigation::DIR_BACK) {
-    if (_saveFilename.length() > 0 && _saveBuffer.length() > 0) _saveLog();
+    _closeLog();
+    _stopWifiStream();
     Screen.goBack();
   } else if (dir == INavigation::DIR_PRESS) {
     _sendCommand();
@@ -81,9 +80,15 @@ void UartTerminalScreen::onItemSelected(uint8_t index) {
     case 0: _configBaud();     break;
     case 1: _configRx();       break;
     case 2: _configTx();       break;
-    case 3: _configSaveFile(); break;
-    case 4: _startTerminal();  break;
-    default:                   break;
+    case 3: _configSaveMode(); break;
+    case 4:
+      if      (_saveMode == SAVE_NO)         _startTerminal();
+      else if (_saveMode == SAVE_FILE)       _configSaveFile();
+      else if (_saveMode == SAVE_STREAM_AP)  _configApName();
+      else                                   _configNetwork();
+      break;
+    case 5: _startTerminal(); break;
+    default:                  break;
   }
 }
 
@@ -92,11 +97,45 @@ void UartTerminalScreen::onItemSelected(uint8_t index) {
 void UartTerminalScreen::_updateLabels() {
   snprintf(_baudLabel, sizeof(_baudLabel), "%d", _baud);
   if (_rxPin < 0) snprintf(_rxLabel, sizeof(_rxLabel), "none");
-  else            snprintf(_rxLabel, sizeof(_rxLabel), "%d",  _rxPin);
+  else            snprintf(_rxLabel, sizeof(_rxLabel), "%d", _rxPin);
   if (_txPin < 0) snprintf(_txLabel, sizeof(_txLabel), "none");
-  else            snprintf(_txLabel, sizeof(_txLabel), "%d",  _txPin);
-  if (_saveFilename.length() == 0) snprintf(_saveLabel, sizeof(_saveLabel), "Off");
-  else _saveFilename.toCharArray(_saveLabel, sizeof(_saveLabel));
+  else            snprintf(_txLabel, sizeof(_txLabel), "%d", _txPin);
+
+  switch (_saveMode) {
+    case SAVE_FILE:       snprintf(_saveModeLabel, sizeof(_saveModeLabel), "File");    break;
+    case SAVE_STREAM_AP:  snprintf(_saveModeLabel, sizeof(_saveModeLabel), "AP");      break;
+    case SAVE_STREAM_NET: snprintf(_saveModeLabel, sizeof(_saveModeLabel), "Network"); break;
+    default:              snprintf(_saveModeLabel, sizeof(_saveModeLabel), "No");      break;
+  }
+
+  if (_saveMode == SAVE_FILE) {
+    if (_saveFilename.length() == 0) snprintf(_saveLabel, sizeof(_saveLabel), "tap to set");
+    else _saveFilename.toCharArray(_saveLabel, sizeof(_saveLabel));
+  } else if (_saveMode == SAVE_STREAM_AP) {
+    _apName.toCharArray(_saveLabel, sizeof(_saveLabel));
+  } else if (_saveMode == SAVE_STREAM_NET) {
+    if (_networkSSID.length() == 0) snprintf(_saveLabel, sizeof(_saveLabel), "tap to scan");
+    else _networkSSID.toCharArray(_saveLabel, sizeof(_saveLabel));
+  }
+}
+
+void UartTerminalScreen::_rebuildItems() {
+  _configItems[0] = {"Baud Rate", _baudLabel};
+  _configItems[1] = {"RX GPIO",   _rxLabel};
+  _configItems[2] = {"TX GPIO",   _txLabel};
+  _configItems[3] = {"Save Mode", _saveModeLabel};
+  if (_saveMode == SAVE_NO) {
+    _configItems[4] = {"Start", nullptr};
+    setItems(_configItems, 5);
+  } else {
+    const char* label = nullptr;
+    if      (_saveMode == SAVE_FILE)       label = "Filename";
+    else if (_saveMode == SAVE_STREAM_AP)  label = "AP Name";
+    else if (_saveMode == SAVE_STREAM_NET) label = "Network";
+    _configItems[4] = {label, _saveLabel};
+    _configItems[5] = {"Start", nullptr};
+    setItems(_configItems, 6);
+  }
 }
 
 void UartTerminalScreen::_configBaud() {
@@ -129,20 +168,78 @@ void UartTerminalScreen::_configTx() {
   render();
 }
 
+void UartTerminalScreen::_configSaveMode() {
+  static constexpr InputSelectAction::Option modes[] = {
+    {"No",           "no"},
+    {"File",         "file"},
+    {"Stream (AP)",  "ap"},
+    {"Stream (Net)", "net"},
+  };
+  const char* cur = "no";
+  if      (_saveMode == SAVE_FILE)       cur = "file";
+  else if (_saveMode == SAVE_STREAM_AP)  cur = "ap";
+  else if (_saveMode == SAVE_STREAM_NET) cur = "net";
+  const char* v = InputSelectAction::popup("Save Mode", modes, 4, cur);
+  if (v) {
+    if      (strcmp(v, "file") == 0) _saveMode = SAVE_FILE;
+    else if (strcmp(v, "ap")   == 0) _saveMode = SAVE_STREAM_AP;
+    else if (strcmp(v, "net")  == 0) _saveMode = SAVE_STREAM_NET;
+    else                             _saveMode = SAVE_NO;
+  }
+  _updateLabels();
+  _rebuildItems();
+  render();
+}
+
 void UartTerminalScreen::_configSaveFile() {
-  if (_saveFilename.length() > 0) {
-    _saveFilename = "";
-  } else {
-    char def[28] = "uart_log";
-    time_t now = time(nullptr);
-    if (now > 1577836800L) {
-      struct tm* t = localtime(&now);
-      snprintf(def, sizeof(def), "%04d%02d%02d_%02d%02d%02d",
-               t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
-               t->tm_hour, t->tm_min, t->tm_sec);
-    }
-    String v = InputTextAction::popup("Log filename", def);
-    if (!InputTextAction::wasCancelled() && v.length() > 0) _saveFilename = v;
+  char def[28] = "uart_log";
+  time_t now = time(nullptr);
+  if (now > 1577836800L) {
+    struct tm* t = localtime(&now);
+    snprintf(def, sizeof(def), "%04d%02d%02d_%02d%02d%02d",
+             t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
+             t->tm_hour, t->tm_min, t->tm_sec);
+  }
+  const char* prompt = _saveFilename.length() > 0 ? _saveFilename.c_str() : def;
+  String v = InputTextAction::popup("Log filename", prompt);
+  if (!InputTextAction::wasCancelled() && v.length() > 0) _saveFilename = v;
+  _updateLabels();
+  render();
+}
+
+void UartTerminalScreen::_configApName() {
+  String v = InputTextAction::popup("AP Name", _apName.c_str());
+  if (!InputTextAction::wasCancelled() && v.length() > 0) _apName = v;
+  _updateLabels();
+  render();
+}
+
+void UartTerminalScreen::_configNetwork() {
+  WifiUtility::ScannedWifi nets[WifiUtility::MAX_WIFI];
+  ShowStatusAction::show("Scanning WiFi...", 0);
+  int n = WifiUtility::scan(nets, WifiUtility::MAX_WIFI);
+  if (n == 0) { ShowStatusAction::show("No networks found", 1500); render(); return; }
+
+  InputSelectAction::Option opts[WifiUtility::MAX_WIFI];
+  for (int i = 0; i < n; i++) {
+    opts[i].label = nets[i].label;
+    opts[i].value = nets[i].ssid;
+  }
+  const char* sel = InputSelectAction::popup("Network", opts, n, _networkSSID.c_str());
+  if (!sel) { render(); return; }
+
+  const char* bssid = "";
+  for (int i = 0; i < n; i++) {
+    if (strcmp(nets[i].ssid, sel) == 0) { bssid = nets[i].bssid; break; }
+  }
+
+  auto res = WifiUtility::connectWithPrompt(bssid, sel);
+  if (res == WifiUtility::CONNECT_OK) {
+    _networkSSID  = sel;
+    _networkBssid = bssid;
+    ShowStatusAction::show(("Connected to " + String(sel)).c_str(), 1500);
+  } else if (res == WifiUtility::CONNECT_FAILED) {
+    ShowStatusAction::show("Connection failed", 1500);
   }
   _updateLabels();
   render();
@@ -168,11 +265,9 @@ void UartTerminalScreen::_startTerminal() {
   char info[48];
   snprintf(info, sizeof(info), "RX:%d TX:%d  %d baud", _rxPin, _txPin, _baud);
   _log.addLine(info, TFT_DARKGREY);
-  if (_saveFilename.length() > 0) {
-    char buf[40];
-    snprintf(buf, sizeof(buf), "Log -> %s.log", _saveFilename.c_str());
-    _log.addLine(buf, TFT_DARKGREY);
-  }
+
+  if      (_saveMode == SAVE_FILE)   _openLog();
+  else if (_saveMode != SAVE_NO)     _startWifiStream();
 
   int n = Achievement.inc("uart_first_connect");
   if (n == 1) Achievement.unlock("uart_first_connect");
@@ -206,13 +301,8 @@ void UartTerminalScreen::_drainShared() {
     if (c == '\r') continue;
     if (c == '\n' || _rxLineBuf.length() >= 58) {
       _log.addLine(_rxLineBuf.c_str(), TFT_WHITE);
-      if (_saveLineCount < MAX_SAVE_LINES) {
-        _saveBuffer += _rxLineBuf + "\n";
-        _saveLineCount++;
-      } else if (_saveLineCount == MAX_SAVE_LINES) {
-        _saveBuffer += "...(truncated)\n";
-        _saveLineCount++;
-      }
+      if (_logFile) _logFile.println(_rxLineBuf.c_str());
+      _broadcastLine(_rxLineBuf.c_str());
       _rxLineBuf = "";
       gotData = true;
     } else {
@@ -249,31 +339,104 @@ void UartTerminalScreen::_sendCommand() {
     char echo[68];
     snprintf(echo, sizeof(echo), _hexMode ? "> [H] %s" : "> %s", cmd.c_str());
     _log.addLine(echo, TFT_CYAN);
-    if (_saveLineCount < MAX_SAVE_LINES) {
-      _saveBuffer += echo;
-      _saveBuffer += "\n";
-      _saveLineCount++;
-    }
+    if (_logFile) _logFile.println(echo);
+    _broadcastLine(echo);
     int n = Achievement.inc("uart_send_command");
     if (n == 1) Achievement.unlock("uart_send_command");
   }
   render();
 }
 
-void UartTerminalScreen::_saveLog() {
+// ── Log file ──────────────────────────────────────────────────────────────────
+
+void UartTerminalScreen::_openLog() {
   Uni.Storage->makeDir("/unigeek/utility/uart");
   String path = "/unigeek/utility/uart/" + _saveFilename + ".log";
-  fs::File f  = Uni.Storage->open(path.c_str(), "w");
-  if (f) {
-    f.print(_saveBuffer);
-    f.close();
+  _logFile = Uni.Storage->open(path.c_str(), "w");
+  char buf[40];
+  if (_logFile) {
+    snprintf(buf, sizeof(buf), "Log -> %s.log", _saveFilename.c_str());
+    _log.addLine(buf, TFT_DARKGREY);
     int n = Achievement.inc("uart_log_saved");
     if (n == 1) Achievement.unlock("uart_log_saved");
-    ShowStatusAction::show("Log saved!", 1000);
   } else {
-    ShowStatusAction::show("Save failed", 1000);
+    _log.addLine("Log open failed", TFT_RED);
   }
 }
+
+void UartTerminalScreen::_closeLog() {
+  if (!_logFile) return;
+  _logFile.close();
+}
+
+// ── WiFi stream ───────────────────────────────────────────────────────────────
+
+void UartTerminalScreen::_startWifiStream() {
+  if (_saveMode == SAVE_STREAM_AP) {
+    WiFi.softAP(_apName.c_str());
+    delay(100);
+    _apStarted = true;
+    _tcpServer.begin();
+    _wifiStarted = true;
+    char buf[56];
+    snprintf(buf, sizeof(buf), "AP: %s  → %s:%d",
+             _apName.c_str(), WiFi.softAPIP().toString().c_str(), TCP_PORT);
+    _log.addLine(buf, TFT_DARKGREY);
+    int na = Achievement.inc("uart_stream_ap");
+    if (na == 1) Achievement.unlock("uart_stream_ap");
+  } else {
+    // SAVE_STREAM_NET — connection already established in _configNetwork
+    if (WiFi.status() != WL_CONNECTED) {
+      _log.addLine("WiFi not connected", TFT_RED);
+      return;
+    }
+    _tcpServer.begin();
+    _wifiStarted = true;
+    char buf[56];
+    snprintf(buf, sizeof(buf), "Net: %s  → %s:%d",
+             _networkSSID.c_str(), WiFi.localIP().toString().c_str(), TCP_PORT);
+    _log.addLine(buf, TFT_DARKGREY);
+    int nn = Achievement.inc("uart_stream_net");
+    if (nn == 1) Achievement.unlock("uart_stream_net");
+  }
+}
+
+void UartTerminalScreen::_stopWifiStream() {
+  if (!_wifiStarted) return;
+  for (int i = 0; i < MAX_TCP_CLIENTS; i++) {
+    if (_tcpClients[i]) _tcpClients[i].stop();
+  }
+  _tcpServer.stop();
+  if (_apStarted) {
+    WiFi.softAPdisconnect(true);
+    _apStarted = false;
+  } else {
+    WiFi.disconnect();
+  }
+  _wifiStarted = false;
+}
+
+void UartTerminalScreen::_acceptClients() {
+  if (!_wifiStarted) return;
+  if (!_tcpServer.hasClient()) return;
+  for (int i = 0; i < MAX_TCP_CLIENTS; i++) {
+    if (!_tcpClients[i] || !_tcpClients[i].connected()) {
+      _tcpClients[i] = _tcpServer.available();
+      return;
+    }
+  }
+  _tcpServer.available().stop();  // no free slot
+}
+
+void UartTerminalScreen::_broadcastLine(const char* line) {
+  if (!_wifiStarted) return;
+  for (int i = 0; i < MAX_TCP_CLIENTS; i++) {
+    if (_tcpClients[i] && _tcpClients[i].connected())
+      _tcpClients[i].println(line);
+  }
+}
+
+// ── Status bar ────────────────────────────────────────────────────────────────
 
 void UartTerminalScreen::_statusBarCb(Sprite& sp, int barY, int w, void* user) {
   auto* s = static_cast<UartTerminalScreen*>(user);
@@ -283,8 +446,15 @@ void UartTerminalScreen::_statusBarCb(Sprite& sp, int barY, int w, void* user) {
   sp.setTextDatum(TL_DATUM);
   sp.setTextColor(TFT_DARKGREY);
   sp.drawString(buf, 2, barY);
-  sp.setTextColor(s->_hexMode ? TFT_YELLOW : TFT_DARKGREY);
   sp.setTextDatum(TR_DATUM);
-  sp.drawString(s->_hexMode ? "HEX" : "STR", w - 2, barY);
+  if (s->_wifiStarted) {
+    IPAddress ip = s->_apStarted ? WiFi.softAPIP() : WiFi.localIP();
+    char ipBuf[28];
+    snprintf(ipBuf, sizeof(ipBuf), ":%d %s", TCP_PORT, ip.toString().c_str());
+    sp.setTextColor(TFT_GREEN);
+    sp.drawString(ipBuf, w - 2, barY);
+  } else {
+    sp.setTextColor(s->_hexMode ? TFT_YELLOW : TFT_DARKGREY);
+    sp.drawString(s->_hexMode ? "HEX" : "STR", w - 2, barY);
+  }
 }
-
