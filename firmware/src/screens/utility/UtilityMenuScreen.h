@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Arduino.h>  // for DEVICE_HAS_WEBAUTHN
 #include "ui/templates/ListScreen.h"
 
 class UtilityMenuScreen : public ListScreen
@@ -12,6 +13,20 @@ public:
   void onItemSelected(uint8_t index) override;
 
 private:
+#ifdef DEVICE_HAS_WEBAUTHN
+  ListItem _items[10] = {
+    {"I2C Detector"},
+    {"QR Code"},
+    {"Barcode"},
+    {"File Manager"},
+    {"Manage Passkeys"},
+    {"Achievements"},
+    {"TOTP Auth"},
+    {"UART Terminal"},
+    {"Pomodoro"},
+    {"Random Line Picker"},
+  };
+#else
   ListItem _items[9] = {
     {"I2C Detector"},
     {"QR Code"},
@@ -23,4 +38,5 @@ private:
     {"Pomodoro"},
     {"Random Line Picker"},
   };
+#endif
 };
