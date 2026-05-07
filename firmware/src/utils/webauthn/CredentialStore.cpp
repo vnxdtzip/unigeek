@@ -122,26 +122,19 @@ bool writeBytes(const char* path, const uint8_t* buf, size_t len)
   return n == len;
 }
 
-bool loadOrGenMaster()
+// Load master from disk. Does NOT auto-generate — use
+// CredentialStore::generateMaster() once WiFi+NTP entropy is in place.
+// Returns false when master.bin is absent.
+bool loadMaster()
 {
   if (g_masterLoaded) return true;
-  if (!ensureDir()) {
-    WA_LOG("CS loadOrGenMaster fail: ensureDir");
+  if (!storage()) return false;
+  if (!storage()->exists(kMasterPath)) return false;
+  if (!readBytes(kMasterPath, g_master, sizeof(g_master))) {
+    WA_LOG("CS loadMaster fail: read %s", kMasterPath);
     return false;
   }
-  if (readBytes(kMasterPath, g_master, sizeof(g_master))) {
-    WA_LOG("CS master.bin loaded (%u B)", (unsigned)sizeof(g_master));
-    g_masterLoaded = true;
-    return true;
-  }
-  // First boot — generate.
-  WA_LOG("CS master.bin not found, generating");
-  WebAuthnCrypto::random(g_master, sizeof(g_master));
-  if (!writeBytes(kMasterPath, g_master, sizeof(g_master))) {
-    WA_LOG("CS loadOrGenMaster fail: writeBytes %s", kMasterPath);
-    return false;
-  }
-  WA_LOG("CS master.bin generated + written");
+  WA_LOG("CS master.bin loaded (%u B)", (unsigned)sizeof(g_master));
   g_masterLoaded = true;
   return true;
 }
@@ -174,8 +167,45 @@ bool saveCounter()
 bool CredentialStore::init()
 {
   if (!WebAuthnCrypto::init()) return false;
-  if (!loadOrGenMaster())      return false;
+  loadMaster();   // tolerates missing master.bin — see hasMaster()/generateMaster()
   loadCounter();
+  return true;
+}
+
+bool CredentialStore::hasMaster()
+{
+  if (g_masterLoaded) return true;
+  if (!storage())    return false;
+  return storage()->exists(kMasterPath);
+}
+
+bool CredentialStore::generateMaster(bool force)
+{
+  if (!WebAuthnCrypto::init()) return false;
+  if (!ensureDir())            return false;
+
+  if (storage() && storage()->exists(kMasterPath)) {
+    if (!force) {
+      WA_LOG("CS generateMaster: master exists and force=false");
+      return false;
+    }
+    // Wipe everything bound to the old master (creds, counter, PIN, config),
+    // then reset RAM-side state so the next op picks up the fresh material.
+    WA_LOG("CS generateMaster: regenerating - wiping prior state");
+    if (!wipe()) {
+      WA_LOG("CS generateMaster: wipe failed");
+      return false;
+    }
+  }
+
+  WebAuthnCrypto::random(g_master, sizeof(g_master));
+  if (!writeBytes(kMasterPath, g_master, sizeof(g_master))) {
+    WA_LOG("CS generateMaster fail: write %s", kMasterPath);
+    memset(g_master, 0, sizeof(g_master));
+    return false;
+  }
+  g_masterLoaded = true;
+  WA_LOG("CS generateMaster ok");
   return true;
 }
 
@@ -193,6 +223,10 @@ bool CredentialStore::encodeCredentialId(const uint8_t priv[kPrivKeySize],
 {
   if (!init()) {
     WA_LOG("CS encodeCredentialId fail: init() returned false");
+    return false;
+  }
+  if (!g_masterLoaded) {
+    WA_LOG("CS encodeCredentialId fail: no master key (Generate BIP39 first)");
     return false;
   }
   // Layout: nonce(16) || rpIdHash(32) || ct(32) || tag(16)
@@ -226,6 +260,7 @@ bool CredentialStore::decodeCredentialId(const uint8_t* idBytes, size_t idLen,
 {
   if (idLen != kCredIdSize) return false;
   if (!init())              return false;
+  if (!g_masterLoaded)      return false;   // no master, nothing decrypts
 
   const uint8_t* nonce = idBytes;
   const uint8_t* rid   = idBytes + 16;
@@ -255,6 +290,7 @@ bool CredentialStore::decodeCredentialId(const uint8_t* idBytes, size_t idLen,
 bool CredentialStore::getMasterKey(uint8_t out[kMasterKeySize])
 {
   if (!init()) return false;
+  if (!g_masterLoaded) return false;
   memcpy(out, g_master, kMasterKeySize);
   return true;
 }

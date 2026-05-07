@@ -27,11 +27,12 @@ public:
 
 private:
   enum State : uint8_t {
+    ST_NO_MASTER,     // no master.bin — render "Generate BIP39 first" hint
     ST_PIN_PROMPT,    // ask for PIN if one is set
     ST_WARNING,       // pre-display warning + UP confirm
     ST_WORDS,         // showing words (paged)
     ST_DONE,          // "have you written them down?" exit prompt
-    ST_DENIED,        // bad PIN or aborted — render error and exit on press
+    ST_DENIED,        // technical failure — render error and exit on press
   };
 
   static constexpr uint8_t kWordCount    = 24;
@@ -47,7 +48,7 @@ private:
     int16_t  headerH;       // top reserve (page indicator)
     int16_t  footerH;       // bottom reserve (hint line)
   };
-  Layout _layout() const;
+  Layout _layout();
 
   State    _state       = ST_PIN_PROMPT;
   uint8_t  _page        = 0;
@@ -62,6 +63,7 @@ private:
   void _drawWords();
   void _drawDone();
   void _drawError();
+  void _drawNoMaster();
 };
 
 #endif  // DEVICE_HAS_WEBAUTHN

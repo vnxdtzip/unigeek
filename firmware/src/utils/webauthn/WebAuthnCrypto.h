@@ -18,6 +18,12 @@ public:
   // RNG
   static void random(uint8_t* out, size_t len);
 
+  // Force CTR_DRBG to pull a fresh entropy chunk from esp_random(). Call after
+  // arranging conditions that improve the hardware RNG quality (WiFi/BT block
+  // active, RTC synced, etc.) so the next `random()` outputs reflect the
+  // refreshed entropy pool. No-op if init() hasn't run.
+  static bool reseed();
+
   // SHA-256 oneshot
   static void sha256(const uint8_t* in, size_t len, uint8_t out[32]);
 

@@ -6,9 +6,11 @@
 
 #include "ui/templates/ListScreen.h"
 
-// Hub for on-device WebAuthn management. Pushes either the BIP-39 backup
-// screen or the resident-credential list. Does NOT touch USB FIDO HID;
-// safe to enter while a host is not connected.
+// Hub for on-device WebAuthn management. First entry's label flips between
+// "Generate BIP39" and "Regenerate BIP39" depending on whether a master key
+// already exists; behaviour is otherwise identical (push generate screen).
+//
+// Does NOT touch USB FIDO HID; safe to enter while a host is not connected.
 class WebAuthnManageScreen : public ListScreen {
 public:
   const char* title() override { return "Manage WebAuthn"; }
@@ -17,7 +19,8 @@ public:
   void onItemSelected(uint8_t index)  override;
 
 private:
-  ListItem _items[2] = {
+  ListItem _items[3] = {
+    {nullptr},          // label set in onInit() — "Generate BIP39" or "Regenerate BIP39"
     {"BIP39 Backup"},
     {"Passkeys"},
   };

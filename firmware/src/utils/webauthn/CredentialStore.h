@@ -28,9 +28,24 @@ public:
   static constexpr size_t kCredIdSize    = 96;  // 16 + 32 + 32 + 16
   static constexpr size_t kHmacTagSize   = 16;
 
-  // Load the master key (or generate + persist it on first call).
-  // Loads the global counter as well. Idempotent.
+  // Load the master key from disk if present + load the global counter.
+  // Idempotent. Does NOT auto-generate the master — see generateMaster().
+  // Returns true even when master.bin is absent (counter still loads); use
+  // hasMaster() to check whether key material is available.
   static bool init();
+
+  // True when /unigeek/utility/fido/master.bin exists (or has already been
+  // loaded into RAM this session). All credential operations gate on this.
+  static bool hasMaster();
+
+  // Explicitly create a fresh master key with the *current* CTR_DRBG state.
+  // Caller is expected to have arranged WiFi/BT-active + NTP-synced RTC so
+  // the underlying esp_random() entropy is high quality (call
+  // WebAuthnCrypto::reseed() before this).
+  //   force=false: refuse if master.bin already exists.
+  //   force=true:  wipe everything (counter, PIN, config, resident creds)
+  //                first, since old credentials are bound to the old master.
+  static bool generateMaster(bool force);
 
   // Atomically increment the global signature counter and return the new
   // value. Persists immediately. Returns 0 if storage is unavailable.

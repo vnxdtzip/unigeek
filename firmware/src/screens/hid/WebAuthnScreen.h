@@ -31,6 +31,7 @@ private:
 
   State        _state            = ST_ACTIVE;
   bool         _profileMismatch  = false;   // USB taken by kbd/mouse this boot
+  bool         _noMaster         = false;   // master.bin missing — needs Generate BIP39 first
   bool         _chromeDrawn      = false;
   bool         _lastConnected    = false;   // tracks first paint
   uint32_t     _txCount          = 0;       // dispatched transactions

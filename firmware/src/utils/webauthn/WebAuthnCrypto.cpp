@@ -75,6 +75,16 @@ void WebAuthnCrypto::random(uint8_t* out, size_t len)
   mbedtls_ctr_drbg_random(&g_drbg, out, len);
 }
 
+bool WebAuthnCrypto::reseed()
+{
+  if (!g_inited) return false;
+  // mbedtls_ctr_drbg_reseed pulls a fresh entropy chunk from our registered
+  // source (esp_entropy_callback → esp_random). The "additional input" arg
+  // is optional context to mix in — leave null since esp_random's own state
+  // is what we care about refreshing.
+  return mbedtls_ctr_drbg_reseed(&g_drbg, nullptr, 0) == 0;
+}
+
 void WebAuthnCrypto::sha256(const uint8_t* in, size_t len, uint8_t out[32])
 {
   mbedtls_sha256(in, len, out, 0);

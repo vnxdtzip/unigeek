@@ -17,18 +17,23 @@
 const char* WebAuthnBackupScreen::title()
 {
   switch (_state) {
-    case ST_WARNING: return "Backup: Warning";
-    case ST_WORDS:   return "Backup Seed";
-    case ST_DONE:    return "Backup Done";
-    case ST_DENIED:  return "Backup Denied";
-    default:         return "Backup";
+    case ST_NO_MASTER: return "Backup Unavailable";
+    case ST_WARNING:   return "Backup: Warning";
+    case ST_WORDS:     return "Backup Seed";
+    case ST_DONE:      return "Backup Done";
+    case ST_DENIED:    return "Backup Denied";
+    default:           return "Backup";
   }
 }
 
 void WebAuthnBackupScreen::onInit()
 {
   webauthn::CredentialStore::init();
-  if (webauthn::CredentialStore::isPinSet()) {
+  if (!webauthn::CredentialStore::hasMaster()) {
+    // No master.bin yet — point the user at the Generate flow instead of
+    // emitting a generic "load failed" error.
+    _state = ST_NO_MASTER;
+  } else if (webauthn::CredentialStore::isPinSet()) {
     _state = ST_PIN_PROMPT;
   } else {
     // No PIN — go straight to warning, but the warning copy is sterner.
@@ -127,7 +132,7 @@ void WebAuthnBackupScreen::onUpdate()
     return;
   }
 
-  if (_state == ST_DONE || _state == ST_DENIED) {
+  if (_state == ST_DONE || _state == ST_DENIED || _state == ST_NO_MASTER) {
     if (dir == INavigation::DIR_PRESS) {
       // Wipe the displayed words from memory before exit.
       memset(_wordIdx, 0, sizeof(_wordIdx));
@@ -142,6 +147,7 @@ void WebAuthnBackupScreen::onRender()
 {
   switch (_state) {
     case ST_PIN_PROMPT: /* InputTextAction handles its own UI */ return;
+    case ST_NO_MASTER:  _drawNoMaster(); break;
     case ST_WARNING:    _drawWarning();  break;
     case ST_WORDS:      _drawWords();    break;
     case ST_DONE:       _drawDone();     break;
@@ -179,7 +185,7 @@ void WebAuthnBackupScreen::_drawWarning()
                  cx, bodyY() + bodyH() - 4);
 }
 
-WebAuthnBackupScreen::Layout WebAuthnBackupScreen::_layout() const
+WebAuthnBackupScreen::Layout WebAuthnBackupScreen::_layout()
 {
   Layout L;
   L.rowH    = 14;
@@ -292,6 +298,32 @@ void WebAuthnBackupScreen::_drawError()
   lcd.setTextDatum(BC_DATUM);
   lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
   lcd.drawString("PRESS: exit",
+                 bodyX() + bodyW() / 2, bodyY() + bodyH() - 4);
+}
+
+void WebAuthnBackupScreen::_drawNoMaster()
+{
+  auto& lcd = Uni.Lcd;
+  lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
+  lcd.setTextSize(1);
+  lcd.setTextDatum(TC_DATUM);
+  int cx = bodyX() + bodyW() / 2;
+  int y  = bodyY() + 8;
+
+  lcd.setTextColor(TFT_YELLOW, TFT_BLACK);
+  lcd.drawString("No master key yet", cx, y); y += 16;
+
+  lcd.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  lcd.drawString("Nothing to back up.",     cx, y); y += 14;
+  lcd.drawString("Create one first via:",   cx, y); y += 14;
+
+  lcd.setTextColor(TFT_CYAN, TFT_BLACK);
+  lcd.drawString("Manage WebAuthn",         cx, y); y += 12;
+  lcd.drawString(">  Generate BIP39",       cx, y);
+
+  lcd.setTextDatum(BC_DATUM);
+  lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  lcd.drawString("PRESS / BACK: exit",
                  bodyX() + bodyW() / 2, bodyY() + bodyH() - 4);
 }
 

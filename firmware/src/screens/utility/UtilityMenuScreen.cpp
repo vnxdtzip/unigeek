@@ -11,7 +11,7 @@
 #include "screens/utility/PomodoroScreen.h"
 #include "screens/utility/RandomLinePickerScreen.h"
 #ifdef DEVICE_HAS_WEBAUTHN
-#include "screens/utility/WebAuthnManageScreen.h"
+#include "screens/utility/webauthn/WebAuthnManageScreen.h"
 #endif
 
 void UtilityMenuScreen::onInit() {

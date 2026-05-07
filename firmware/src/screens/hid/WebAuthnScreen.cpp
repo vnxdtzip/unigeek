@@ -51,6 +51,14 @@ void WebAuthnScreen::onInit()
   webauthn::Ctap2::initPinAuthToken();
   webauthn::CredentialStore::init();
 
+  // No master key generated yet — every CTAP2 op would fail at storage. Skip
+  // USB FIDO HID claim and render a setup-required message instead so the
+  // user knows where to go (Utility > Manage WebAuthn > Generate BIP39).
+  if (!webauthn::CredentialStore::hasMaster()) {
+    _noMaster = true;
+    return;
+  }
+
   // Construct the singleton — this attempts to claim the WEBAUTHN profile.
   // If keyboard/mouse already grabbed USB this boot, registration fails
   // and we render a "reboot to switch" message instead of starting up.
@@ -75,7 +83,7 @@ void WebAuthnScreen::onInit()
 
 void WebAuthnScreen::onUpdate()
 {
-  if (_profileMismatch) {
+  if (_profileMismatch || _noMaster) {
     if (Uni.Nav->wasPressed()) {
       auto dir = Uni.Nav->readDirection();
       if (dir == INavigation::DIR_BACK || dir == INavigation::DIR_PRESS) {
@@ -123,6 +131,28 @@ void WebAuthnScreen::onRender()
     lcd.setTextColor(TFT_YELLOW, TFT_BLACK);
     lcd.drawString("Reboot, then open WebAuthn first.",
                    bodyX() + bodyW() / 2, bodyY() + bodyH() / 2 + 32);
+    return;
+  }
+
+  if (_noMaster) {
+    lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
+    int cx = bodyX() + bodyW() / 2;
+    int y  = bodyY() + 12;
+    lcd.setTextDatum(TC_DATUM);
+    lcd.setTextSize(2);
+    lcd.setTextColor(TFT_YELLOW, TFT_BLACK);
+    lcd.drawString("Setup needed", cx, y); y += 22;
+    lcd.setTextSize(1);
+    lcd.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    lcd.drawString("No master key on device.", cx, y); y += 14;
+    lcd.drawString("Create one first via:",   cx, y); y += 14;
+    lcd.setTextColor(TFT_CYAN, TFT_BLACK);
+    lcd.drawString("Utility > Manage WebAuthn",  cx, y); y += 12;
+    lcd.drawString(">  Generate BIP39",          cx, y);
+    lcd.setTextDatum(BC_DATUM);
+    lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    lcd.drawString("PRESS / BACK: exit",
+                   bodyX() + bodyW() / 2, bodyY() + bodyH() - 4);
     return;
   }
 
