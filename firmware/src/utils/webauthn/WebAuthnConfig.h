@@ -65,6 +65,7 @@ enum Ctap2Cmd : uint8_t {
   CTAP2_GET_NEXT_ASSERTION     = 0x08,
   CTAP2_CREDENTIAL_MANAGEMENT  = 0x0A,
   CTAP2_SELECTION              = 0x0B,
+  CTAP2_LARGE_BLOBS            = 0x0C,
   CTAP2_AUTHENTICATOR_CONFIG   = 0x0D,
 };
 
@@ -105,6 +106,8 @@ enum Ctap2Status : uint8_t {
   CTAP2_ERR_REQUEST_TOO_LARGE       = 0x39,
   CTAP2_ERR_ACTION_TIMEOUT          = 0x3A,
   CTAP2_ERR_UP_REQUIRED             = 0x3B,
+  CTAP2_ERR_LARGE_BLOB_STORAGE_FULL = 0x44,
+  CTAP2_ERR_INTEGRITY_FAILURE       = 0x46,
 };
 
 // COSE algorithm identifiers

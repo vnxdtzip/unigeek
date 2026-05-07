@@ -360,6 +360,24 @@ bool WebAuthnCrypto::deriveHmacSecret(const uint8_t* cred_id, size_t cred_id_len
   return true;
 }
 
+bool WebAuthnCrypto::deriveLargeBlobKey(const uint8_t* cred_id, size_t cred_id_len,
+                                        uint8_t out[32])
+{
+  uint8_t master[CredentialStore::kMasterKeySize];
+  if (!CredentialStore::getMasterKey(master)) return false;
+
+  // tag = HMAC(master, "largeBlobKey")
+  uint8_t tag[32];
+  hmacSha256(master, sizeof(master),
+             (const uint8_t*)"largeBlobKey", 12, tag);
+  // out = HMAC(tag, cred_id) — distinct per cred, deterministic per master
+  hmacSha256(tag, 32, cred_id, cred_id_len, out);
+
+  memset(master, 0, sizeof(master));
+  memset(tag,    0, sizeof(tag));
+  return true;
+}
+
 }  // namespace webauthn
 
 #endif  // DEVICE_HAS_WEBAUTHN

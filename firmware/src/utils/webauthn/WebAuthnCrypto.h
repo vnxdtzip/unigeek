@@ -100,6 +100,15 @@ public:
   // already initialized the store. Returns false if storage isn't ready.
   static bool deriveHmacSecret(const uint8_t* cred_id, size_t cred_id_len,
                                uint8_t out[64]);
+
+  // ── largeBlobKey extension key derivation ─────────────────────────────
+  // CTAP 2.1 §6.10: each credential gets a deterministic 32-byte key the
+  // host uses to encrypt/decrypt its slot in the device-stored largeBlob
+  // array. Derived as:
+  //   out = LEFT(HMAC-SHA-256(masterKey, "largeBlobKey" || cred_id), 32)
+  // Returns false when the master key is unavailable (Generate BIP39 first).
+  static bool deriveLargeBlobKey(const uint8_t* cred_id, size_t cred_id_len,
+                                 uint8_t out[32]);
 };
 
 }  // namespace webauthn

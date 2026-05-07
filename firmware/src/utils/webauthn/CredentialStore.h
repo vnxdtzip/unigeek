@@ -145,9 +145,28 @@ public:
   static uint8_t getMinPinLen  ();
   static bool    setMinPinLen  (uint8_t len);
 
-  // Wipe master + counter + resident creds + PIN + config. Master key is
-  // then regenerated lazily on next encode call. All previously issued
-  // credentials are rendered useless (intended).
+  // ── largeBlob array storage (CTAP 2.1 §6.10) ──────────────────────────
+  // Single global byte blob: a CBOR-encoded array of {ciphertext, nonce,
+  // origSize} maps each keyed by a per-cred largeBlobKey, followed by
+  // LEFT(SHA-256(prefix), 16) as a trailing hash. Authenticator stores
+  // the bytes verbatim — host owns parsing/encryption.
+  //
+  // Initial state when largeblob.bin is absent: 0x80 (empty CBOR array) +
+  // 16-byte truncated SHA-256 hash. getLargeBlob synthesizes that lazily
+  // so the file only exists after the host writes a real array.
+  static constexpr size_t kMaxLargeBlobLen = 4096;
+
+  // Read the entire largeBlob array. Returns false on storage failure;
+  // returns true with the empty default if no file exists.
+  static bool getLargeBlob(uint8_t* out, size_t maxLen, size_t* outLen);
+
+  // Replace the entire largeBlob array atomically (wipe-and-write).
+  // `len` must be ≤ kMaxLargeBlobLen.
+  static bool setLargeBlob(const uint8_t* data, size_t len);
+
+  // Wipe master + counter + resident creds + PIN + config + largeBlob.
+  // Master key is then regenerated explicitly via generateMaster(). All
+  // previously issued credentials are rendered useless (intended).
   static bool wipe();
 };
 

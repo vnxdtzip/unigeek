@@ -71,6 +71,7 @@ struct GnaState {
   uint8_t   hmacShared[32];
   uint8_t   hmacSaltDec[64];
   size_t    hmacSaltLen;            // 32 or 64
+  bool      largeBlobKey;           // host asked for 0x07 in each assertion
 };
 static GnaState s_gna;
 
@@ -292,8 +293,9 @@ uint16_t Ctap2::_handleGetInfo(const uint8_t*, uint16_t,
 
   // Map keys must be in canonical (ascending) order:
   //   1 versions, 2 extensions, 3 aaguid, 4 options, 5 maxMsgSize,
-  //   6 pinUvAuthProtocols, 9 transports, 10 algorithms, 13 minPINLength
-  w.beginMap(9);
+  //   6 pinUvAuthProtocols, 9 transports, 10 algorithms,
+  //   11 maxSerializedLargeBlobArray, 13 minPINLength
+  w.beginMap(10);
 
   // 0x01 versions — advertise CTAP 2.1 since we emit 2.1-only keys
   // (transports 0x09, algorithms 0x0A). U2F_V2 is for CTAP1/AUTHENTICATE
@@ -306,8 +308,9 @@ uint16_t Ctap2::_handleGetInfo(const uint8_t*, uint16_t,
 
   // 0x02 extensions
   w.putUint(0x02);
-  w.beginArray(1);
+  w.beginArray(2);
     w.putText("hmac-secret");
+    w.putText("largeBlobKey");
 
   // 0x03 aaguid
   w.putUint(0x03);
@@ -315,20 +318,21 @@ uint16_t Ctap2::_handleGetInfo(const uint8_t*, uint16_t,
 
   // 0x04 options. Per CTAP2 spec text-key canonical order (length, then byte):
   //   "rk"(2) < "up"(2,'r'<'u') < "alwaysUv"(8,a<c) < "credMgmt"(8)
-  //     < "authnrCfg"(9,a<c) < "clientPin"(9) < "pinUvAuthToken"(14)
-  //     < "setMinPINLength"(15)
+  //     < "authnrCfg"(9,a<c) < "clientPin"(9) < "largeBlobs"(10)
+  //     < "pinUvAuthToken"(14) < "setMinPINLength"(15)
   //   clientPin: present-and-true if a PIN is currently set; present-and-false
   //              if the authenticator supports PIN but none configured.
   bool pinIsSet  = CredentialStore::isPinSet();
   bool alwaysUv  = CredentialStore::getAlwaysUv();
   w.putUint(0x04);
-  w.beginMap(8);
+  w.beginMap(9);
     w.putText("rk");               w.putBool(true);
     w.putText("up");               w.putBool(true);
     w.putText("alwaysUv");         w.putBool(alwaysUv);
     w.putText("credMgmt");         w.putBool(true);
     w.putText("authnrCfg");        w.putBool(true);
     w.putText("clientPin");        w.putBool(pinIsSet);
+    w.putText("largeBlobs");       w.putBool(true);
     w.putText("pinUvAuthToken");   w.putBool(true);
     w.putText("setMinPINLength");  w.putBool(true);
 
@@ -357,6 +361,11 @@ uint16_t Ctap2::_handleGetInfo(const uint8_t*, uint16_t,
       w.putText("alg");  w.putInt(COSE_ES256);
       w.putText("type"); w.putText("public-key");
 
+  // 0x0B maxSerializedLargeBlobArray — capacity reported to the host so it
+  // knows how big a write transaction may be (CTAP 2.1 §6.10).
+  w.putUint(0x0B);
+  w.putUint((uint64_t)CredentialStore::kMaxLargeBlobLen);
+
   // 0x0D minPINLength — current configured minimum PIN length.
   w.putUint(0x0D);
   w.putUint(CredentialStore::getMinPinLen());
@@ -380,7 +389,8 @@ uint16_t Ctap2::_handleMakeCredential(const uint8_t* req, uint16_t reqLen,
   uint8_t  userId[64]; size_t userIdLen = 0;
   char     mcUserName[65]; memset(mcUserName, 0, sizeof(mcUserName));
   bool     hasEs256 = false;
-  bool     reqHmacSecret = false;
+  bool     reqHmacSecret  = false;
+  bool     reqLargeBlobKey = false;
   bool     reqRk = false;
   const uint8_t* pinUvAuthParam = nullptr;  size_t pupLen = 0;
   uint64_t pinUvAuthProtocol = 0;
@@ -462,6 +472,10 @@ uint16_t Ctap2::_handleMakeCredential(const uint8_t* req, uint16_t reqLen,
             bool b;
             if (!r.readBool(&b)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
             if (b) reqHmacSecret = true;
+          } else if (klen == 12 && memcmp(key, "largeBlobKey", 12) == 0) {
+            bool b;
+            if (!r.readBool(&b)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+            if (b) reqLargeBlobKey = true;
           } else {
             r.skip();
           }
@@ -657,21 +671,40 @@ uint16_t Ctap2::_handleMakeCredential(const uint8_t* req, uint16_t reqLen,
          (unsigned)authLen, (unsigned)sigLen);
 
   // ── Encode response ────────────────────────────────────────────────
+  // Optional 0x05 largeBlobKey — derive per-cred 32-byte key when the host
+  // asked for it via the largeBlobKey extension. Top-level field, NOT in
+  // authData extensions (per CTAP 2.1 §6.10.4).
+  uint8_t lbKey[32];
+  bool    lbKeyReady = false;
+  if (reqLargeBlobKey) {
+    if (WebAuthnCrypto::deriveLargeBlobKey(credId, sizeof(credId), lbKey)) {
+      lbKeyReady = true;
+    } else {
+      WA_LOG("MC: largeBlobKey derive failed (no master?) - omitting");
+    }
+  }
+
   out[0] = CTAP2_OK;
   CborWriter w(out + 1, outMax - 1);
-  w.beginMap(3);
+  int nKeys = 3 + (lbKeyReady ? 1 : 0);
+  w.beginMap(nKeys);
     w.putUint(0x01);    w.putText("packed");
     w.putUint(0x02);    w.putBytes(authData, authLen);
     w.putUint(0x03);
       w.beginMap(2);
         w.putText("alg"); w.putInt(COSE_ES256);
         w.putText("sig"); w.putBytes(sigDer, sigLen);
+    if (lbKeyReady) {
+      w.putUint(0x05);  w.putBytes(lbKey, sizeof(lbKey));
+    }
 
+  if (lbKeyReady) memset(lbKey, 0, sizeof(lbKey));
   if (!w.ok()) {
     WA_LOG("MC fail: response CBOR encoder overflow (outMax=%u)", (unsigned)outMax);
     return statusOnly(out, CTAP2_ERR_PROCESSING);
   }
-  WA_LOG("MC ok: respLen=%u", (unsigned)(1 + w.size()));
+  WA_LOG("MC ok: respLen=%u%s", (unsigned)(1 + w.size()),
+         lbKeyReady ? " +largeBlobKey" : "");
   return (uint16_t)(1 + w.size());
 }
 
@@ -696,7 +729,8 @@ uint16_t Ctap2::_handleGetAssertion(const uint8_t* req, uint16_t reqLen,
 
   // hmac-secret extension input (parsed from request key 0x04). All four
   // fields are populated together when the host requests hmac-secret.
-  bool     reqHmacSecret = false;
+  bool     reqHmacSecret    = false;
+  bool     reqLargeBlobKey  = false;
   uint8_t  hmacPeerPub[65];                  // host's ECDH P-256 pubkey
   uint8_t  hmacSaltEnc[64 + 16] = {0};       // up to 2 × 32 B salts AES-CBC encrypted
   size_t   hmacSaltEncLen = 0;
@@ -805,6 +839,10 @@ uint16_t Ctap2::_handleGetAssertion(const uint8_t* req, uint16_t reqLen,
               }
             }
             reqHmacSecret = true;
+          } else if (klen == 12 && memcmp(key, "largeBlobKey", 12) == 0) {
+            bool b;
+            if (!r.readBool(&b)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+            if (b) reqLargeBlobKey = true;
           } else {
             r.skip();
           }
@@ -1024,19 +1062,28 @@ uint16_t Ctap2::_handleGetAssertion(const uint8_t* req, uint16_t reqLen,
   WA_LOG("GA: signed (authLen=%u sigLen=%u credIdLen=%u)",
          (unsigned)authLen, (unsigned)sigLen, (unsigned)winnerCredIdLen);
 
+  // Optional largeBlobKey extension output (top-level field 0x07).
+  uint8_t lbKey[32];
+  bool    lbKeyReady = false;
+  if (reqLargeBlobKey) {
+    if (WebAuthnCrypto::deriveLargeBlobKey(winnerCredId, winnerCredIdLen, lbKey)) {
+      lbKeyReady = true;
+    } else {
+      WA_LOG("GA: largeBlobKey derive failed - omitting");
+    }
+  }
+
   // ── Encode response ────────────────────────────────────────────────
   out[0] = CTAP2_OK;
   CborWriter w(out + 1, outMax - 1);
   // Canonical CBOR: shorter text key first → "id" (2) before "type" (4).
-  // Some hosts (Chrome's webauthn stack) reject GetAssertion responses
-  // when keys aren't in canonical order, even if they parse otherwise.
-  //
   // For resident creds: include 0x04 user (always) and 0x05 numberOfCredentials
   // (only when > 1, per CTAP2 §6.2) so the browser knows which account signed.
   bool hasUserName = isResident && resUserName[0] != '\0';
   int  respKeys    = 3
-                   + (isResident ? 1 : 0)               // 0x04 user
-                   + (isResident && numCreds > 1 ? 1 : 0); // 0x05 numberOfCredentials
+                   + (isResident ? 1 : 0)                  // 0x04 user
+                   + (isResident && numCreds > 1 ? 1 : 0)  // 0x05 numberOfCredentials
+                   + (lbKeyReady ? 1 : 0);                 // 0x07 largeBlobKey
   w.beginMap(respKeys);
     w.putUint(0x01);
       w.beginMap(2);
@@ -1045,7 +1092,6 @@ uint16_t Ctap2::_handleGetAssertion(const uint8_t* req, uint16_t reqLen,
     w.putUint(0x02);  w.putBytes(authData, authLen);
     w.putUint(0x03);  w.putBytes(sigDer, sigLen);
     if (isResident) {
-      // 0x04 user: "id" (2) before "name" (4) — canonical text-key order.
       w.putUint(0x04);
       w.beginMap(hasUserName ? 2 : 1);
         w.putText("id");   w.putBytes(resUserId, resUserIdLen);
@@ -1054,6 +1100,10 @@ uint16_t Ctap2::_handleGetAssertion(const uint8_t* req, uint16_t reqLen,
         w.putUint(0x05);  w.putUint((uint64_t)numCreds);
       }
     }
+    if (lbKeyReady) {
+      w.putUint(0x07);  w.putBytes(lbKey, sizeof(lbKey));
+    }
+  if (lbKeyReady) memset(lbKey, 0, sizeof(lbKey));
 
   if (!w.ok()) {
     WA_LOG("GA fail: response CBOR encoder overflow (outMax=%u)", (unsigned)outMax);
@@ -1068,7 +1118,8 @@ uint16_t Ctap2::_handleGetAssertion(const uint8_t* req, uint16_t reqLen,
     s_gna.lastMs      = (uint32_t)millis();
     s_gna.credIdx     = 1;        // index 0 was returned in this GA
     s_gna.flags       = gaFlags & ~FLAG_ED;  // FLAG_ED added per-cred
-    s_gna.hmacEnabled = (hmacRespLen > 0);
+    s_gna.hmacEnabled  = (hmacRespLen > 0);
+    s_gna.largeBlobKey = reqLargeBlobKey;
     memcpy(s_gna.clientDataHash, clientDataHash, 32);
     memcpy(s_gna.rpIdHash, rpIdHash, 32);
     WA_LOG("GA: GNA armed credIdx=1/%d hmac=%d", numCreds, (int)s_gna.hmacEnabled);
@@ -1193,11 +1244,20 @@ uint16_t Ctap2::_handleGetNextAssertion(uint8_t* out, uint16_t outMax)
     return statusOnly(out, CTAP2_ERR_PROCESSING);
   }
 
+  // Optional largeBlobKey for THIS cred (each GNA response carries its own).
+  uint8_t lbKey[32];
+  bool    lbKeyReady = false;
+  if (s_gna.largeBlobKey
+      && WebAuthnCrypto::deriveLargeBlobKey(c.credId, CredentialStore::kCredIdSize, lbKey)) {
+    lbKeyReady = true;
+  }
+
   bool hasUserName = c.userName[0] != '\0';
   out[0] = CTAP2_OK;
   CborWriter w(out + 1, outMax - 1);
   // Same shape as GA but no 0x05 numberOfCredentials (host already knows).
-  w.beginMap(4);
+  int respKeys = 4 + (lbKeyReady ? 1 : 0);
+  w.beginMap(respKeys);
     w.putUint(0x01);
       w.beginMap(2);
         w.putText("id");   w.putBytes(c.credId, CredentialStore::kCredIdSize);
@@ -1208,6 +1268,10 @@ uint16_t Ctap2::_handleGetNextAssertion(uint8_t* out, uint16_t outMax)
       w.beginMap(hasUserName ? 2 : 1);
         w.putText("id");   w.putBytes(c.userId, c.userIdLen);
         if (hasUserName) { w.putText("name"); w.putText(c.userName); }
+    if (lbKeyReady) {
+      w.putUint(0x07); w.putBytes(lbKey, sizeof(lbKey));
+    }
+  if (lbKeyReady) memset(lbKey, 0, sizeof(lbKey));
 
   if (!w.ok()) {
     s_gna.active = false;
@@ -1831,6 +1895,189 @@ uint16_t Ctap2::_handleCredentialManagement(const uint8_t* req, uint16_t reqLen,
   return statusOnly(out, CTAP2_ERR_INVALID_OPTION);
 }
 
+// ── LargeBlobs ────────────────────────────────────────────────────────
+// CTAP 2.1 §6.10. A single global byte blob keyed by per-cred largeBlobKey
+// that the host derives from the MakeCredential extension. Get is always
+// allowed; Set requires PERM_LBW (0x10) when a PIN is set.
+//
+// Set transactions can span multiple commands — host sends offset=0 with
+// `length` to begin and chunks of bytes thereafter. We hold the partial
+// buffer in BSS until either (a) all bytes received → atomic write, or
+// (b) any non-LargeBlobs CBOR command lands → discard.
+
+namespace {
+struct LbWriteState {
+  bool     active;
+  uint32_t expectedLen;   // total size declared in the start chunk
+  uint32_t writtenLen;    // bytes accumulated so far
+  uint8_t  buf[CredentialStore::kMaxLargeBlobLen];
+};
+static LbWriteState s_lb;
+}  // namespace
+
+uint16_t Ctap2::_handleLargeBlobs(const uint8_t* req, uint16_t reqLen,
+                                   uint8_t* out, uint16_t outMax)
+{
+  CborReader r(req, reqLen);
+  size_t mapCount = 0;
+  if (!r.readMapHeader(&mapCount)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+
+  // Request map keys (CTAP 2.1 §6.10.2):
+  //   0x01 get        — uint, length to read
+  //   0x02 set        — bytes, chunk to write
+  //   0x03 offset     — uint
+  //   0x04 length     — uint, total expected size (only on first set chunk)
+  //   0x05 pinUvAuthParam (set only)
+  //   0x06 pinUvAuthProtocol
+  bool          haveGet = false;
+  bool          haveSet = false;
+  uint64_t      getLen  = 0;
+  const uint8_t* setBuf = nullptr; size_t setLen = 0;
+  uint64_t      offset  = 0;       bool gotOffset = false;
+  uint64_t      totalLen = 0;      bool gotTotalLen = false;
+  const uint8_t* pinUvAuthParam = nullptr; size_t pupLen = 0;
+  uint64_t      protocol = 0;
+
+  for (size_t i = 0; i < mapCount; i++) {
+    uint64_t k;
+    if (!r.readUint(&k)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+    switch (k) {
+      case 0x01:
+        if (!r.readUint(&getLen)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+        haveGet = true;
+        break;
+      case 0x02:
+        if (!r.readBytes(&setBuf, &setLen)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+        haveSet = true;
+        break;
+      case 0x03:
+        if (!r.readUint(&offset)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+        gotOffset = true;
+        break;
+      case 0x04:
+        if (!r.readUint(&totalLen)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+        gotTotalLen = true;
+        break;
+      case 0x05:
+        if (!r.readBytes(&pinUvAuthParam, &pupLen))
+          return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+        break;
+      case 0x06:
+        if (!r.readUint(&protocol)) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+        break;
+      default:
+        r.skip();
+        break;
+    }
+    if (!r.ok()) return statusOnly(out, CTAP2_ERR_INVALID_CBOR);
+  }
+
+  // Exactly one of get/set per request.
+  if ((haveGet && haveSet) || (!haveGet && !haveSet))
+    return statusOnly(out, CTAP2_ERR_INVALID_OPTION);
+  if (!gotOffset) return statusOnly(out, CTAP2_ERR_MISSING_PARAMETER);
+
+  // ── 0x01 get ─────────────────────────────────────────────────────────
+  if (haveGet) {
+    static uint8_t blob[CredentialStore::kMaxLargeBlobLen];
+    size_t blobLen = 0;
+    if (!CredentialStore::getLargeBlob(blob, sizeof(blob), &blobLen)) {
+      WA_LOG("LB get: storage read failed");
+      return statusOnly(out, CTAP2_ERR_PROCESSING);
+    }
+    if (offset > blobLen) {
+      return statusOnly(out, CTAP2_ERR_INVALID_OPTION);
+    }
+    size_t available = blobLen - (size_t)offset;
+    size_t want      = (getLen < available) ? (size_t)getLen : available;
+
+    out[0] = CTAP2_OK;
+    CborWriter w(out + 1, outMax - 1);
+    w.beginMap(1);
+      w.putUint(0x01);
+      w.putBytes(blob + offset, want);
+    if (!w.ok()) return statusOnly(out, CTAP2_ERR_PROCESSING);
+    WA_LOG("LB get: offset=%lu len=%u (of %u total)",
+           (unsigned long)offset, (unsigned)want, (unsigned)blobLen);
+    return (uint16_t)(1 + w.size());
+  }
+
+  // ── 0x02 set ─────────────────────────────────────────────────────────
+  // Auth gate: when a PIN is set, the token must carry PERM_LBW.
+  if (CredentialStore::isPinSet()) {
+    if (!pinUvAuthParam || pupLen != 16)
+      return statusOnly(out, CTAP2_ERR_PIN_REQUIRED);
+    // pinUvAuthParam = LEFT(HMAC(token, 0xFF×32 || 0x0C || 0x02 ||
+    //                              uint32(offset) || sha256(setBuf)), 16)
+    // …but historical hosts (libfido2) compute it over a simpler structure.
+    // Match what we already do for CM/ACfg: hash 0xFF×32 || cmd || offset(LE) || data.
+    static uint8_t macIn[32 + 1 + 4 + CredentialStore::kMaxLargeBlobLen + 16];
+    size_t off = 0;
+    memset(macIn + off, 0xFF, 32); off += 32;
+    macIn[off++] = (uint8_t)CTAP2_LARGE_BLOBS;
+    macIn[off++] = 0x02;
+    macIn[off++] = (uint8_t)( offset        & 0xFF);
+    macIn[off++] = (uint8_t)((offset >>  8) & 0xFF);
+    macIn[off++] = (uint8_t)((offset >> 16) & 0xFF);
+    macIn[off++] = (uint8_t)((offset >> 24) & 0xFF);
+    if (off + setLen > sizeof(macIn))
+      return statusOnly(out, CTAP2_ERR_REQUEST_TOO_LARGE);
+    memcpy(macIn + off, setBuf, setLen); off += setLen;
+    if (!verifyPinUvAuthParam(protocol, macIn, off, pinUvAuthParam, pupLen)) {
+      WA_LOG("LB set: pinUvAuthParam mismatch");
+      return statusOnly(out, CTAP2_ERR_PIN_AUTH_INVALID);
+    }
+    if ((paut_permissions & PERM_LBW) == 0) {
+      WA_LOG("LB set: token lacks LBW perm");
+      return statusOnly(out, CTAP2_ERR_PIN_AUTH_INVALID);
+    }
+  }
+
+  // First chunk: offset must be 0, length declared, transaction begins.
+  if (offset == 0) {
+    if (!gotTotalLen)                        return statusOnly(out, CTAP2_ERR_MISSING_PARAMETER);
+    if (totalLen > CredentialStore::kMaxLargeBlobLen)
+                                             return statusOnly(out, CTAP2_ERR_LARGE_BLOB_STORAGE_FULL);
+    if (totalLen < 17)                       return statusOnly(out, CTAP2_ERR_INVALID_OPTION);
+    if (setLen > totalLen)                   return statusOnly(out, CTAP2_ERR_INVALID_OPTION);
+    s_lb.active      = true;
+    s_lb.expectedLen = (uint32_t)totalLen;
+    s_lb.writtenLen  = 0;
+    memcpy(s_lb.buf, setBuf, setLen);
+    s_lb.writtenLen  = (uint32_t)setLen;
+  } else {
+    // Continuation chunk: must match an active transaction at the right offset.
+    if (!s_lb.active)                       return statusOnly(out, CTAP2_ERR_NOT_ALLOWED);
+    if (gotTotalLen)                        return statusOnly(out, CTAP2_ERR_INVALID_OPTION);
+    if (offset != s_lb.writtenLen)          return statusOnly(out, CTAP2_ERR_INVALID_OPTION);
+    if (offset + setLen > s_lb.expectedLen) return statusOnly(out, CTAP2_ERR_INVALID_OPTION);
+    memcpy(s_lb.buf + offset, setBuf, setLen);
+    s_lb.writtenLen += (uint32_t)setLen;
+  }
+
+  // Last chunk reached → verify trailing hash and commit.
+  if (s_lb.writtenLen == s_lb.expectedLen) {
+    // CTAP 2.1: payload[0..n-16] is the array bytes; payload[n-16..n] is
+    // LEFT(SHA-256(payload[0..n-16]), 16). Verify before persisting.
+    size_t bodyLen = s_lb.expectedLen - 16;
+    uint8_t hash[32];
+    WebAuthnCrypto::sha256(s_lb.buf, bodyLen, hash);
+    if (memcmp(hash, s_lb.buf + bodyLen, 16) != 0) {
+      WA_LOG("LB set: trailing hash mismatch");
+      s_lb.active = false;
+      return statusOnly(out, CTAP2_ERR_INTEGRITY_FAILURE);
+    }
+    if (!CredentialStore::setLargeBlob(s_lb.buf, s_lb.expectedLen)) {
+      WA_LOG("LB set: storage write failed");
+      s_lb.active = false;
+      return statusOnly(out, CTAP2_ERR_PROCESSING);
+    }
+    WA_LOG("LB set: committed %u bytes", (unsigned)s_lb.expectedLen);
+    s_lb.active = false;
+  }
+  return statusOnly(out, CTAP2_OK);
+}
+
 // ── AuthenticatorConfig ───────────────────────────────────────────────
 // CTAP 2.1 §6.11. Subcommands implemented:
 //   0x02 toggleAlwaysUv     — flip the alwaysUv flag (no params)
@@ -2011,6 +2258,11 @@ uint16_t Ctap2::dispatch(uint8_t cmd,
   if (ctapCmd != CTAP2_GET_NEXT_ASSERTION) {
     s_gna.active = false;
   }
+  // Same idea for the LargeBlobs multi-chunk write transaction (§6.10.2):
+  // any non-LargeBlobs CBOR command discards the partial buffer.
+  if (ctapCmd != CTAP2_LARGE_BLOBS) {
+    s_lb.active = false;
+  }
 
   uint16_t r;
   switch (ctapCmd) {
@@ -2020,6 +2272,7 @@ uint16_t Ctap2::dispatch(uint8_t cmd,
     case CTAP2_RESET:                   r = _handleReset(resp, respMax);                           break;
     case CTAP2_CLIENT_PIN:              r = _handleClientPin(p, pLen, resp, respMax);              break;
     case CTAP2_CREDENTIAL_MANAGEMENT:   r = _handleCredentialManagement(p, pLen, resp, respMax);   break;
+    case CTAP2_LARGE_BLOBS:             r = _handleLargeBlobs(p, pLen, resp, respMax);             break;
     case CTAP2_AUTHENTICATOR_CONFIG:    r = _handleAuthenticatorConfig(p, pLen, resp, respMax);    break;
     case CTAP2_GET_NEXT_ASSERTION:      r = _handleGetNextAssertion(resp, respMax);                break;
     case CTAP2_SELECTION:

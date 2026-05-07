@@ -24,6 +24,7 @@ constexpr const char* kDevKeyPath  = "/unigeek/utility/fido/u2f_priv.bin";
 constexpr const char* kDevCertPath = "/unigeek/utility/fido/u2f_cert.der";
 constexpr const char* kPinPath     = "/unigeek/utility/fido/pin.bin";
 constexpr const char* kCfgPath     = "/unigeek/utility/fido/config.bin";
+constexpr const char* kLbPath      = "/unigeek/utility/fido/largeblob.bin";
 constexpr const char* kCredsDir    = "/unigeek/utility/fido/credentials";
 
 static const char kHex[] = "0123456789abcdef";
@@ -517,6 +518,52 @@ bool CredentialStore::setMinPinLen(uint8_t len)
   return writeConfig(cfg);
 }
 
+// ── largeBlob array storage ───────────────────────────────────────────
+
+namespace {
+// Initial empty largeBlob array per CTAP 2.1 §6.10:
+//   serialized = 0x80 (empty CBOR array) || LEFT(SHA-256(0x80), 16)
+// SHA-256 of {0x80} = 6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d
+// First 16 bytes: 6e 34 0b 9c ff b3 7a 98 9c a5 44 e6 bb 78 0a 2c
+constexpr uint8_t kLbDefault[17] = {
+  0x80,
+  0x6e, 0x34, 0x0b, 0x9c, 0xff, 0xb3, 0x7a, 0x98,
+  0x9c, 0xa5, 0x44, 0xe6, 0xbb, 0x78, 0x0a, 0x2c,
+};
+}
+
+bool CredentialStore::getLargeBlob(uint8_t* out, size_t maxLen, size_t* outLen)
+{
+  if (!out || !outLen) return false;
+  if (!storage()) return false;
+
+  // No file yet → return the synthesized empty-array+hash default.
+  if (!storage()->exists(kLbPath)) {
+    if (maxLen < sizeof(kLbDefault)) return false;
+    memcpy(out, kLbDefault, sizeof(kLbDefault));
+    *outLen = sizeof(kLbDefault);
+    return true;
+  }
+
+  fs::File f = storage()->open(kLbPath, "r");
+  if (!f) return false;
+  size_t fsz = f.size();
+  if (fsz > maxLen) { f.close(); return false; }
+  size_t n = f.read(out, fsz);
+  f.close();
+  if (n != fsz) return false;
+  *outLen = fsz;
+  return true;
+}
+
+bool CredentialStore::setLargeBlob(const uint8_t* data, size_t len)
+{
+  if (!data) return false;
+  if (len > kMaxLargeBlobLen) return false;
+  if (!storage() || !ensureDir()) return false;
+  return writeBytes(kLbPath, data, len);
+}
+
 bool CredentialStore::writeResidentCred(const ResidentCredRecord& rec)
 {
   if (!init() || !ensureCredsDir()) return false;
@@ -653,6 +700,7 @@ bool CredentialStore::wipe()
   storage()->deleteFile(kDevCertPath);
   storage()->deleteFile(kPinPath);
   storage()->deleteFile(kCfgPath);
+  storage()->deleteFile(kLbPath);
   deleteAllResidentCreds();
   g_devKeyLoaded   = false;
   g_devCertLoaded  = false;
