@@ -14,7 +14,15 @@ Create a new firmware release. Usage: `/release <version>` (e.g. `/release 1.3.0
 
 2. **Version check**: Compare the requested version against the latest tag. If the new version is lower than or equal to the latest tag, **warn the user and stop** — do not proceed until they confirm or provide a corrected version.
 
-3. **Build all environments**: Run `./scripts/build_all.sh` (macOS/Linux) or `scripts/build_all.bat` (Windows) to verify all board environments compile successfully. If any build fails, **stop and report the error** — do not proceed with the release.
+3. **Build all environments with the version baked in**: Run
+
+   ```bash
+   PLATFORMIO_BUILD_SRC_FLAGS='-DFIRMWARE_VERSION='\''"<version>"'\''' ./scripts/build_all.sh
+   ```
+
+   on macOS/Linux (Windows: `scripts/build_all.bat` — set `PLATFORMIO_BUILD_SRC_FLAGS` in the same shell first). Substitute `<version>` for the release version (e.g. `1.7.3`). The flag stamps `FIRMWARE_VERSION` into every `builds/unigeek-<env>.bin` so they double as M5Burner upload artefacts (`scripts/m5burner.py upload <version>`). Without it, AboutScreen falls back to `"dev"` and `m5burner.py`'s pre-flight version check will reject the bins.
+
+   If any build fails, **stop and report the error** — do not proceed with the release.
 
 4. **Build website**: Run `cd website && npm run build` to verify the website builds without errors. If the build fails, **stop and report the error** — do not proceed with the release. Also spot-check that any knowledge/*.md changes in this cycle render on the features pages (see **Knowledge file conventions** at the end of this file).
 
