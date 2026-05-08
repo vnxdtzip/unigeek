@@ -141,13 +141,14 @@ void LuaScreen::_startScript(const String& path) {
 
   _engine.setBodyRect(0, 0, Uni.Lcd.width(), Uni.Lcd.height());
 
-  String compileErr;
-  bool ok = _engine.loadScript(buf, compileErr);
-  heap_caps_free(buf);
-
+  // loadScript takes ownership of `buf`; it'll be freed on the Lua task once
+  // compile finishes (or now if the engine rejects it). Compile errors come
+  // through stepLoop()'s error path.
+  String queueErr;
+  bool ok = _engine.loadScript(buf, n, queueErr);
   if (!ok) {
-    Serial.println("[lua] syntax: " + compileErr);
-    _log.addLine(("[syntax] " + compileErr).c_str(), TFT_RED);
+    Serial.println("[lua] queue: " + queueErr);
+    _log.addLine(("[error] " + queueErr).c_str(), TFT_RED);
     _engine.deinit();
     _state = STATE_DONE;
     render();

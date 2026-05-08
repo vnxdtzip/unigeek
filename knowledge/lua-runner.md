@@ -16,17 +16,17 @@ Lua Runner lets you write and run **Lua 5.1 scripts** directly on the device, no
 
 ## How Scripts Execute
 
-The script is **compiled once** and then `lua_pcall()` runs it **exactly once**. The script owns the entire call stack — the standard pattern is a `while true do` loop:
+The script is **compiled once** and then `lua_pcall()` runs it **exactly once** on a dedicated FreeRTOS task. The script owns the entire call stack — the standard pattern is a `while true do` loop:
 
 ```lua
 local lcd = require("uni.lcd")   -- load once, before the loop
+local nav = require("uni.nav")   -- input lives in nav
 
 local W, H  = lcd.w(), lcd.h()
 local frame = 0                  -- local before the loop: persists for the session
 
 while true do
-  uni.update()                   -- keyboard scan + nav state machine
-  local btn = uni.btn()          -- local inside loop: re-created each iteration
+  local btn = nav.btn()          -- local inside loop: re-created each iteration
   if btn == "back" then break end
 
   frame = frame + 1
@@ -44,8 +44,8 @@ end
 | **Locals inside the loop** | Re-created each iteration as normal Lua locals |
 | **No globals needed** | All persistent state goes in locals declared before the loop |
 | **`break`** | Exit the while loop — the runner exits automatically when the script returns |
-| **Back button** | `uni.btn()` returns `"back"` — your script must `break` to exit the loop |
-| **Memory** | Internal SRAM on standard boards; SPIRAM on PSRAM-capable boards |
+| **Back button** | `nav.btn()` returns `"back"` — your script must `break` to exit the loop |
+| **Memory** | Lua VM heap in internal SRAM. Source file buffer uses PSRAM on PSRAM-capable boards for scripts ≥ 2 KB (freed after compile) |
 | **Text datum** | Top-left (`TL_DATUM`) — set by the runner before and after every script |
 
 ---
@@ -67,17 +67,18 @@ Only a subset of Lua 5.1 is included to save flash:
 
 ## `require()` — Lazy Module Loading
 
-`uni.lcd` and `uni.sd` are **lazy-loaded** — the tables are only allocated in memory the first time `require()` is called. Call `require` once before the while loop:
+Three modules are **lazy-loaded** — the tables are only allocated in memory the first time `require()` is called. Call `require` once before the while loop:
 
 ```lua
-local lcd = require("uni.lcd")   -- allocates lcd table once; cached in package.loaded
-local sd  = require("uni.sd")    -- allocates sd table once
+local lcd = require("uni.lcd")   -- display + sprites
+local sd  = require("uni.sd")    -- SD card I/O
+local nav = require("uni.nav")   -- buttons + touch
 ```
 
-The `uni` table (core functions: `btn`, `delay`, `millis`, `heap`, `debug`, `beep`) is always available as a global — no require needed.
+The `uni` table (core functions: `debug`, `delay`, `millis`, `heap`, `beep`) is always available as a global — no require needed.
 
 > [!note]
-> There is no file-backed loader. `require("mymodule")` will **not** load `/unigeek/lua/mymodule.lua`. Only `uni.lcd` and `uni.sd` are available via require.
+> There is no file-backed loader. `require("mymodule")` will **not** load `/unigeek/lua/mymodule.lua`. Only `uni.lcd`, `uni.sd`, and `uni.nav` are available via require.
 
 ---
 
@@ -107,6 +108,8 @@ lcd.textColor(C_WHITE, C_BLACK)
 lcd.print(0, 0, string.format("Score:%-5d", score))
 ```
 
+For **complex composited frames** (multiple overlapping objects, gradients, anti-aliased shapes), build the frame in an off-screen `lcd.sprite()` and `push()` it once per loop — see the sprite section.
+
 Rules:
 - Draw the **static background once** before the while loop — never inside it.
 - Erase each moving object with a bounding box **1–2 px larger** than the sprite on each side.
@@ -126,24 +129,9 @@ uni.debug("script started, heap=" .. uni.heap())
 
 ---
 
-### `uni.update()`
-
-Run one device update cycle: keyboard GPIO scan + navigation state machine. Call once at the **top of every loop iteration** before `uni.btn()`.
-
-```lua
-while true do
-  uni.update()
-  local btn = uni.btn()
-  if btn == "back" then break end
-  uni.delay(16)
-end
-```
-
----
-
 ### `uni.delay(ms)`
 
-Pause for `ms` milliseconds using `vTaskDelay`. Does **not** poll hardware — call `uni.update()` explicitly if you need input during a delay.
+Pause for `ms` milliseconds using `vTaskDelay`. The Lua task sleeps; the host firmware keeps polling input in parallel, so `nav.btn()` and touch state remain fresh after the delay returns.
 
 ```lua
 uni.delay(16)   -- ~60 fps
@@ -151,37 +139,13 @@ uni.delay(33)   -- ~30 fps
 ```
 
 > [!note]
-> Always call `uni.delay()` inside the loop. Without it the CPU spins at full speed and the device becomes unresponsive.
-
----
-
-### `uni.btn()` → string
-
-Read the current navigation input from the last `uni.update()` call. Does **not** scan hardware itself — always call `uni.update()` first.
-
-| Value | Meaning |
-|---|---|
-| `"up"` | Up / joystick up |
-| `"down"` | Down / joystick down |
-| `"left"` | Left / joystick left |
-| `"right"` | Right / joystick right |
-| `"ok"` | Centre press / confirm |
-| `"back"` | Back button |
-| `"none"` | No button pressed this frame |
-
-`"back"` is a plain string — your script must handle it:
-
-```lua
-local btn = uni.btn()
-if btn == "back" then break end
-if btn == "up" then y = y - 4 end
-```
+> Always call `uni.delay()` inside the loop. Without it the CPU spins at full speed and the watchdog will eventually trip.
 
 ---
 
 ### `uni.heap()` → number
 
-Return the current free heap in bytes.
+Return the current free internal-heap in bytes.
 
 ---
 
@@ -238,6 +202,16 @@ Fill the entire screen with black. Use before the while loop or for static scree
 
 ---
 
+### `lcd.fillScreen(color)`
+
+Fill the entire screen with an arbitrary colour.
+
+```lua
+lcd.fillScreen(lcd.color(10, 10, 30))
+```
+
+---
+
 ### `lcd.textSize(n)`
 
 Set text scale. `1` = small, `2` = double-size heading.
@@ -281,6 +255,18 @@ The runner always resets to top-left (0) when the script exits.
 
 ---
 
+### `lcd.textWidth(str)` → number
+
+Return the pixel width of `str` at the current text size and font. Useful for centring or right-aligning without `textDatum`.
+
+```lua
+lcd.textSize(1)
+local label = "Score: " .. score
+lcd.print(W - lcd.textWidth(label) - 4, 0, label)
+```
+
+---
+
 ### `lcd.print(x, y, str)`
 
 Draw a string at pixel position `(x, y)` using the current text size, colour, and datum.
@@ -311,9 +297,96 @@ Draw a line from `(x0, y0)` to `(x1, y1)`.
 
 ---
 
+### `lcd.circle(x, y, r, color)` / `lcd.fillCircle(x, y, r, color)`
+
+Outline (`circle`) or filled (`fillCircle`) circle centred at `(x, y)` with radius `r`.
+
+```lua
+lcd.fillCircle(W / 2, H / 2, 20, lcd.color(255, 200, 0))
+lcd.circle(W / 2, H / 2, 24, lcd.color(60, 60, 60))   -- ring around it
+```
+
+---
+
+### `lcd.roundRect(x, y, w, h, r, color)` / `lcd.fillRoundRect(x, y, w, h, r, color)`
+
+Outline / filled rectangle with rounded corners of radius `r`.
+
+```lua
+lcd.fillRoundRect(8, 8, 120, 28, 4, lcd.color(40, 40, 60))   -- chip background
+lcd.textColor(lcd.color(255, 255, 255))
+lcd.print(16, 14, "Settings")
+```
+
+---
+
+## `uni.lcd.sprite` — Off-screen buffer
+
+`lcd.sprite(w, h)` returns a sprite handle (Lua userdata) backed by an off-screen pixel buffer. Build a complete frame in the sprite, then `push()` it to the screen as one operation — perfect for cases where overdraw becomes too intricate or where you want sub-pixel motion without flicker.
+
+```lua
+local lcd = require("uni.lcd")
+local nav = require("uni.nav")
+
+local W, H = lcd.w(), lcd.h()
+local sp   = lcd.sprite(W, H)            -- nil if allocation failed
+if not sp then uni.debug("sprite OOM"); return end
+
+local C_BG  = sp:color(10, 10, 30)       -- color() works on the sprite too
+local C_DOT = sp:color(255, 220, 0)
+local x, y, vx, vy = W/2, H/2, 2.4, 1.7
+
+while true do
+  if nav.btn() == "back" then break end
+
+  -- Compose the entire frame off-screen
+  sp:fill(C_BG)
+  sp:fillCircle(math.floor(x), math.floor(y), 8, C_DOT)
+  sp:textColor(sp:color(180, 180, 180))
+  sp:print(2, 2, string.format("heap:%d", uni.heap()))
+
+  -- Single blit to the display
+  sp:push(0, 0)
+
+  x = x + vx; y = y + vy
+  if x < 8 or x > W - 8 then vx = -vx end
+  if y < 8 or y > H - 8 then vy = -vy end
+
+  uni.delay(16)
+end
+
+sp:free()   -- optional; __gc also frees on script exit
+```
+
+> [!warning]
+> A full-screen RGB565 sprite uses `W * H * 2` bytes of internal heap (e.g. 320×240 ≈ 150 KB). If `lcd.sprite()` returns `nil`, allocate a smaller sprite or stick with overdraw.
+
+### Sprite handle methods
+
+> [!note]
+> Sprites use the same color values as `lcd.color()`. They are returned as plain numbers; `sp:color(r,g,b)` is provided as a convenience but `lcd.color(r,g,b)` returns the same packed RGB565 value.
+
+| Method | Description |
+|---|---|
+| `sp:push(x, y [, transp])` | Blit sprite to screen at `(x, y)`. Optional `transp` colour is treated as alpha. |
+| `sp:fill(color)` | Fill the entire sprite with `color`. |
+| `sp:rect(x, y, w, h, color)` | Filled rect inside the sprite. |
+| `sp:line(x0, y0, x1, y1, color)` | Line inside the sprite. |
+| `sp:circle(x, y, r, color)` / `sp:fillCircle(x, y, r, color)` | Outline / filled circle. |
+| `sp:roundRect(x, y, w, h, r, color)` / `sp:fillRoundRect(...)` | Outline / filled rounded rect. |
+| `sp:print(x, y, str)` | Draw text at `(x, y)` inside the sprite. |
+| `sp:textColor(fg [, bg])` | Set text colour for the sprite. |
+| `sp:textSize(n)` | Set text scale for the sprite. |
+| `sp:textDatum(n)` | Set text alignment for the sprite (same datum codes as `lcd`). |
+| `sp:textWidth(str)` → number | Pixel width at the sprite's current size. |
+| `sp:w()` / `sp:h()` → number | Sprite width / height. |
+| `sp:free()` | Free the buffer immediately. The sprite handle is unusable afterwards; the script will error if you try to use it again. |
+
+---
+
 ## `uni.sd` — SD Card
 
-Load with `local sd = require("uni.sd")`. Paths are absolute from the SD root, e.g. `/unigeek/lua/save.txt`. All functions return `false` or `nil` when storage is unavailable.
+Load with `local sd = require("uni.sd")`. Paths are absolute from the SD root, e.g. `/unigeek/lua/save.txt`. All functions return `false`, `nil`, or `-1` when storage is unavailable.
 
 ---
 
@@ -357,6 +430,83 @@ for i, e in ipairs(entries) do
 end
 ```
 
+### `sd.remove(path)` → bool
+
+Delete a file. Returns `false` if the file is missing or storage is unavailable.
+
+### `sd.rename(src, dst)` → bool
+
+Rename / move a file from `src` to `dst`. Both paths are absolute from the SD root.
+
+### `sd.mkdir(path)` → bool
+
+Create a directory. Parent directories must already exist.
+
+### `sd.size(path)` → number
+
+Return the file size in bytes. `-1` when missing or storage is unavailable.
+
+```lua
+if sd.size("/unigeek/lua/save.txt") > 1024 then
+  uni.debug("save file is large")
+end
+```
+
+---
+
+## `uni.nav` — Buttons & Touch
+
+Load with `local nav = require("uni.nav")`. The host firmware drives nav state in the background; `nav.*` functions just sample whatever it last latched.
+
+---
+
+### `nav.btn()` → string
+
+Return the most recent navigation event since the last call. Each press is consumed once — calling `nav.btn()` again before another press returns `"none"`.
+
+| Value | Meaning |
+|---|---|
+| `"up"` | Up / joystick up |
+| `"down"` | Down / joystick down |
+| `"left"` | Left / joystick left |
+| `"right"` | Right / joystick right |
+| `"ok"` | Centre press / confirm |
+| `"back"` | Back button |
+| `"none"` | No press latched this frame |
+
+```lua
+local btn = nav.btn()
+if btn == "back" then break end
+if btn == "up"   then y = y - 4 end
+```
+
+---
+
+### `nav.touchX()` / `nav.touchY()` → number
+
+Return the raw screen coordinates of the most recent touch contact, or `-1` when no touch has been seen yet (or on non-touch boards). Coordinates are in display pixels; combine with `nav.isTouched()` to tell a fresh contact from a stale one.
+
+---
+
+### `nav.isTouched()` → bool
+
+Return `true` while a finger is currently in contact with the screen. Goes back to `false` on lift. Always `false` on boards without touch.
+
+```lua
+local nav = require("uni.nav")
+
+while true do
+  if nav.btn() == "back" then break end
+
+  if nav.isTouched() then
+    local tx, ty = nav.touchX(), nav.touchY()
+    lcd.fillCircle(tx, ty, 6, lcd.color(0, 220, 0))
+  end
+
+  uni.delay(16)
+end
+```
+
 ---
 
 ## Writing Scripts with AI
@@ -371,14 +521,14 @@ Paste the context block below into any AI chat **before** describing what you wa
 You are writing a Lua 5.1 script for the UniGeek ESP32 firmware Lua Runner.
 
 ## Execution model
-- The script is compiled once. lua_pcall() runs it exactly once — the script owns the call stack.
+- The script is compiled once. lua_pcall() runs it exactly once on a dedicated
+  FreeRTOS task — the script owns the call stack.
 - The standard pattern is a `while true do` loop inside the script.
 - Locals declared BEFORE the loop persist for the entire session (use instead of globals).
 - Locals declared INSIDE the loop are re-created each iteration as normal.
 - `break` exits the loop; the runner exits automatically when the script returns — no exit() needed.
-- The Back button: uni.btn() returns "back" — your script must break to exit the loop.
-- Call uni.update() ONCE at the top of every loop iteration before uni.btn().
-- uni.delay(ms) does NOT poll hardware — it only sleeps.
+- The Back button: nav.btn() returns "back" — your script must break to exit the loop.
+- uni.delay(ms) sleeps the Lua task; nav state stays fresh across delays.
 - Text datum is TL_DATUM (top-left) at script start and restored on exit.
 
 ## Standard libraries available
@@ -387,14 +537,15 @@ NOT available: io, os, debug.
 All file I/O goes through sd.* (require "uni.sd").
 
 ## require() — module loading
-uni.lcd and uni.sd are lazy-loaded — call require() once before the while loop:
-  local lcd = require("uni.lcd")   -- display functions
-  local sd  = require("uni.sd")    -- SD card functions
-The uni table (btn, delay, millis, heap, debug, beep) is always a global — no require needed.
+Three modules are lazy-loaded — call require() once before the while loop:
+  local lcd = require("uni.lcd")   -- display + sprites
+  local sd  = require("uni.sd")    -- SD card I/O
+  local nav = require("uni.nav")   -- buttons + touch
+The uni table (debug, delay, millis, heap, beep) is always a global — no require needed.
 There is NO file-backed loader — require("mymodule") does NOT load .lua files.
 
 ## Anti-flicker rule — CRITICAL
-NEVER call lcd.clear() inside the while loop — it causes full-screen flicker.
+NEVER call lcd.clear() or lcd.fillScreen() inside the while loop — they cause full-screen flicker.
 Draw the static background ONCE before the while loop, then never again.
 Erase only what moved by painting the background color over the previous bounding box:
   lcd.rect(prev_x - R - 1, prev_y - R - 1, R*2+2, R*2+2, C_BG)  -- erase old
@@ -402,38 +553,63 @@ Erase only what moved by painting the background color over the previous boundin
 For changing text: use lcd.textColor(fg, bg) + string.format padding instead of an erase rect:
   lcd.textColor(WHITE, BLACK)
   lcd.print(0, 0, string.format("Score:%-5d", score))
-lcd.clear() is fine for static screens (idle, game over) drawn only on state entry.
+For complex composited frames: build into lcd.sprite(w, h) and sp:push() once per frame.
+lcd.clear() / lcd.fillScreen() are fine for static screens (idle, game over) drawn only on state entry.
 
 ## Complete API
 
-### System
+### System (always available — no require)
 uni.debug(str)          -- print string to USB serial console (not display)
-uni.update()            -- keyboard scan + nav state machine; call ONCE at top of loop
-uni.delay(ms)           -- pause ms milliseconds (vTaskDelay); does NOT poll hardware
+uni.delay(ms)           -- pause ms milliseconds; nav state stays fresh across delays
 uni.millis()            -- returns uptime in milliseconds (number)
-uni.heap()              -- returns free heap in bytes (number)
+uni.heap()              -- returns free internal heap in bytes (number)
 uni.beep(freq, ms)      -- play tone; no-op on boards without speaker
 
-### Input
-uni.btn()               -- reads nav state from last uni.update(); returns one string:
+### Input  (require "uni.nav" first)
+nav.btn()               -- returns one string per consumed press:
                         --   "up", "down", "left", "right" — directional
                         --   "ok"   — centre press / confirm
                         --   "back" — back button (script must break to exit loop)
-                        --   "none" — nothing pressed
-                        -- ALWAYS call uni.update() before uni.btn() each frame
+                        --   "none" — nothing latched this frame
+                        -- Each press is consumed once.
+nav.touchX()            -- last touch X in pixels, or -1 if no touch / non-touch board
+nav.touchY()            -- last touch Y in pixels, or -1 if no touch / non-touch board
+nav.isTouched()         -- true while a finger is currently down
 
 ### Display  (require "uni.lcd" first; all coordinates in pixels, origin top-left)
 lcd.w()                 -- screen width (number)
 lcd.h()                 -- screen height (number)
 lcd.color(r, g, b)      -- convert 8-bit RGB to RGB565 number; use for all color args
-lcd.clear()             -- fill entire screen with black (ONLY before loop or on static screens)
+lcd.clear()             -- fill entire screen with black
+lcd.fillScreen(c)       -- fill entire screen with color c
 lcd.textSize(n)         -- set text scale: 1=small, 2=large
 lcd.textColor(fg)       -- set foreground color only
 lcd.textColor(fg, bg)   -- set fg + fill bg behind glyphs (use with string.format padding)
 lcd.textDatum(n)        -- set alignment: 0=TL 1=TC 2=TR 3=ML 4=MC 5=MR 6=BL 7=BC 8=BR
+lcd.textWidth(s)        -- pixel width of string s at current size (number)
 lcd.print(x, y, s)      -- draw string s at pixel (x, y) using current datum
 lcd.rect(x,y,w,h,c)     -- draw filled rectangle; c from lcd.color()
 lcd.line(x0,y0,x1,y1,c) -- draw line; c from lcd.color()
+lcd.circle(x,y,r,c)     -- outline circle centred at (x,y), radius r
+lcd.fillCircle(x,y,r,c) -- filled circle
+lcd.roundRect(x,y,w,h,r,c)     -- outline rounded rect; r = corner radius
+lcd.fillRoundRect(x,y,w,h,r,c) -- filled rounded rect
+
+### Sprites  (off-screen buffer; lcd.sprite() returns userdata or nil)
+local sp = lcd.sprite(w, h)    -- allocate; nil if OOM (RGB565 → w*h*2 bytes)
+sp:fill(c)                     -- fill sprite with color
+sp:rect(x,y,w,h,c)             -- filled rect inside sprite
+sp:line(x0,y0,x1,y1,c)         -- line
+sp:circle(x,y,r,c) / sp:fillCircle(x,y,r,c)
+sp:roundRect(x,y,w,h,r,c) / sp:fillRoundRect(x,y,w,h,r,c)
+sp:print(x,y,s)                -- text inside sprite
+sp:textColor(fg [, bg])        -- text colour for sprite
+sp:textSize(n)                 -- text scale for sprite
+sp:textDatum(n)                -- alignment for sprite
+sp:textWidth(s)                -- pixel width
+sp:w() / sp:h()                -- dimensions
+sp:push(x, y [, transp])       -- blit to screen at (x,y); transp is optional alpha colour
+sp:free()                      -- free immediately; __gc also frees on exit
 
 ### SD card  (require "uni.sd" first; absolute paths from SD root)
 sd.exists(path)           -- returns true/false
@@ -441,19 +617,23 @@ sd.read(path)             -- returns file content as string; "" if missing; nil 
 sd.write(path, content)   -- overwrite/create file; returns true/false
 sd.append(path, content)  -- append to file; returns true/false
 sd.list(path)             -- returns array of {name=string, isDir=bool}; max 32 entries
+sd.remove(path)           -- delete a file; returns true/false
+sd.rename(src, dst)       -- rename/move file; returns true/false
+sd.mkdir(path)            -- create directory; returns true/false
+sd.size(path)             -- file size in bytes; -1 if missing/unavailable
 
 ## Rules you must follow
 1. Use the while-loop pattern: while true do … end — runner exits automatically when script returns.
 2. Declare all persistent state as locals BEFORE the while loop — not globals.
-3. NEVER call lcd.clear() inside the loop — use overdraw or textColor(fg,bg) instead.
-4. Call uni.update() ONCE at the very TOP of the loop, before uni.btn().
-5. Always call uni.delay(ms) inside the loop.
-6. Call require("uni.lcd") and require("uni.sd") once, before the loop.
-7. Use math.floor() before passing float coordinates to lcd functions.
-8. Strings passed to lcd.print() must be strings — use tostring() if needed.
-9. Do NOT use `//` for integer division — use math.floor(a/b) (Lua 5.1, not 5.3).
-10. sd.list() returns a 1-indexed Lua array; iterate with ipairs().
-11. Save game state to /unigeek/games/<name>.txt (not /unigeek/lua/).
+3. NEVER call lcd.clear() or lcd.fillScreen() inside the loop — use overdraw, textColor(fg,bg), or sprites.
+4. Always call uni.delay(ms) inside the loop.
+5. Call require("uni.lcd"), require("uni.sd"), require("uni.nav") once, before the loop.
+6. Use math.floor() before passing float coordinates to lcd functions.
+7. Strings passed to lcd.print() must be strings — use tostring() if needed.
+8. Do NOT use `//` for integer division — use math.floor(a/b) (Lua 5.1, not 5.3).
+9. sd.list() returns a 1-indexed Lua array; iterate with ipairs().
+10. Save game state to /unigeek/games/<name>.txt (not /unigeek/lua/).
+11. Sprites are not free — a full-screen RGB565 sprite is w*h*2 bytes of internal heap; check for nil.
 ```
 
 ---
@@ -463,6 +643,7 @@ sd.list(path)             -- returns array of {name=string, isDir=bool}; max 32 
 ```lua
 -- bounce.lua — bouncing dot with overdraw (no flicker)
 local lcd = require("uni.lcd")
+local nav = require("uni.nav")
 
 local W  = lcd.w()
 local H  = lcd.h()
@@ -477,11 +658,10 @@ local C_DOT    = lcd.color(255, 255, 255)
 local C_YELLOW = lcd.color(255, 220,   0)
 
 -- Draw static background once, before the loop
-lcd.rect(0, 0, W, H, C_BG)
+lcd.fillScreen(C_BG)
 
 while true do
-  uni.update()
-  local btn = uni.btn()
+  local btn = nav.btn()
   if btn == "back" then break end
 
   -- Erase previous dot
@@ -494,7 +674,7 @@ while true do
   if by <= R or by >= H - R then vy = -vy; bounces = bounces + 1; uni.beep(660, 15) end
 
   -- Draw dot
-  lcd.rect(math.floor(bx) - R, math.floor(by) - R, R*2, R*2, C_DOT)
+  lcd.fillCircle(math.floor(bx), math.floor(by), R, C_DOT)
 
   -- Status line (textColor bg fill eliminates erase rect)
   lcd.textSize(1)
@@ -515,13 +695,14 @@ end
 | while-loop pattern | `while true do … end` — runner exits automatically when script returns |
 | Locals before loop | Persist for the session; use instead of globals |
 | `break` to exit | Break the while loop; the runner handles the rest automatically |
-| Back button | Returns `"back"` string — `break` to exit the loop |
-| `uni.update()` required | Call once at top of every loop — keyboard scan + nav state machine |
-| `uni.delay()` does NOT poll | Only sleeps; `uni.update()` must be called separately |
-| Lazy require | `uni.lcd` / `uni.sd` only allocated on first require — call once before the loop |
+| Back button | `nav.btn()` returns `"back"` — `break` to exit the loop |
+| `uni.delay()` keeps nav fresh | The host firmware polls input in parallel; `nav.btn()` after a delay returns the latest event |
+| Lazy require | `uni.lcd` / `uni.sd` / `uni.nav` only allocated on first require — call once before the loop |
 | No file-backed require | `require("mymodule")` does NOT load .lua files |
 | textColor bg fill | `textColor(fg, bg)` + `string.format("%-Ns", s)` = flicker-free text update |
-| Overdraw not clear | Erase only moved objects; never `lcd.clear()` inside the loop |
+| Overdraw not clear | Erase only moved objects; never `lcd.clear()` / `lcd.fillScreen()` inside the loop |
+| Sprite for complex frames | Compose into `lcd.sprite(w,h)` and `push()` once when overdraw becomes intricate |
+| Sprite OOM | Full-screen RGB565 = `w*h*2` bytes; `lcd.sprite()` returns `nil` on failure — always check |
 | No `//` integer division | Lua 5.1 — use `math.floor(a/b)` |
 | No `io`/`os` | All file access goes through `sd.*` |
 | Colour is a number | `lcd.color()` returns a plain number — store in a local before the loop |

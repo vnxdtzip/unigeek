@@ -101,6 +101,11 @@ void LuaEngine::deinit() {
   _status = STATUS_IDLE;
   _task   = nullptr;
 
+  if (_pendingSrc) {
+    heap_caps_free(_pendingSrc);
+    _pendingSrc    = nullptr;
+    _pendingSrcLen = 0;
+  }
   if (_chunkRef != LUA_NOREF && _lua) {
     luaL_unref(_lua, LUA_REGISTRYINDEX, _chunkRef);
     _chunkRef = LUA_NOREF;
@@ -111,28 +116,27 @@ void LuaEngine::deinit() {
 
 // ── Script loading ────────────────────────────────────────────────────
 
-bool LuaEngine::loadScript(const char* src, String& errOut) {
-  if (!_lua) return false;
+bool LuaEngine::loadScript(char* src, size_t len, String& errOut) {
+  if (!_lua) {
+    if (src) heap_caps_free(src);
+    errOut = "engine not initialized";
+    return false;
+  }
+  // Drop any previous pending or compiled chunk.
+  if (_pendingSrc) {
+    heap_caps_free(_pendingSrc);
+    _pendingSrc    = nullptr;
+    _pendingSrcLen = 0;
+  }
   if (_chunkRef != LUA_NOREF) {
     luaL_unref(_lua, LUA_REGISTRYINDEX, _chunkRef);
     _chunkRef = LUA_NOREF;
   }
+  _pendingSrc    = src;
+  _pendingSrcLen = len;
   _exitRequested = false;
-
-  size_t srcLen = strlen(src);
-  Serial.printf("[Lua] load bytes=%u freeInt=%u freePsram=%u\n",
-    (unsigned)srcLen,
-    (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-    (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-  int rc = luaL_loadbuffer(_lua, src, srcLen, "script");
-  if (rc != 0) {
-    errOut = lua_tostring(_lua, -1);
-    Serial.printf("[Lua] load FAIL: %s\n", errOut.c_str());
-    lua_pop(_lua, 1);
-    return false;
-  }
-  _chunkRef = luaL_ref(_lua, LUA_REGISTRYINDEX);
-  Serial.println("[Lua] load OK");
+  Serial.printf("[Lua] load queued bytes=%u (compile happens on lua task)\n",
+    (unsigned)len);
   return true;
 }
 
@@ -148,6 +152,35 @@ void LuaEngine::_taskEntry(void* arg) {
 
   Serial.printf("[Lua] task start freeInt=%u\n",
     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+
+  // Compile on this task — the parser is recursive and would overflow the
+  // 8 KB loop-task stack on large scripts. We have 32 KB here.
+  if (eng->_pendingSrc) {
+    Serial.printf("[Lua] compile bytes=%u\n", (unsigned)eng->_pendingSrcLen);
+    int crc = luaL_loadbuffer(L, eng->_pendingSrc, eng->_pendingSrcLen, "script");
+    heap_caps_free(eng->_pendingSrc);
+    eng->_pendingSrc    = nullptr;
+    eng->_pendingSrcLen = 0;
+    if (crc != 0) {
+      eng->_taskErrOut = lua_isstring(L, -1) ? lua_tostring(L, -1) : "compile error";
+      Serial.printf("[Lua] compile FAIL: %s\n", eng->_taskErrOut.c_str());
+      lua_pop(L, 1);
+      eng->_task   = nullptr;
+      eng->_status = STATUS_DONE_ERR;
+      vTaskDelete(nullptr);
+      return;
+    }
+    eng->_chunkRef = luaL_ref(L, LUA_REGISTRYINDEX);
+    Serial.println("[Lua] compile OK");
+  }
+
+  if (eng->_chunkRef == LUA_NOREF) {
+    eng->_taskErrOut = "no chunk to run";
+    eng->_task   = nullptr;
+    eng->_status = STATUS_DONE_ERR;
+    vTaskDelete(nullptr);
+    return;
+  }
 
   lua_rawgeti(L, LUA_REGISTRYINDEX, eng->_chunkRef);
   int rc = lua_pcall(L, 0, 0, 0);
@@ -173,7 +206,9 @@ void LuaEngine::_taskEntry(void* arg) {
 }
 
 bool LuaEngine::stepLoop(String& errOut) {
-  if (!_lua || _chunkRef == LUA_NOREF) return false;
+  if (!_lua) return false;
+  // Need either a queued source (waiting to compile) or a compiled chunk.
+  if (_chunkRef == LUA_NOREF && !_pendingSrc) return false;
 
   if (_status == STATUS_IDLE) {
     if (_exitRequested) return false;
@@ -212,12 +247,10 @@ bool LuaEngine::stepLoop(String& errOut) {
 void LuaEngine::_registerBindings() {
   lua_register(_lua, "exit", _lua_exit);
 
-  // uni table — core functions only; lcd/sd loaded on demand via require()
+  // uni table — core functions only; lcd/sd/nav loaded on demand via require()
   lua_newtable(_lua);
   lua_pushcfunction(_lua, _uni_debug);  lua_setfield(_lua, -2, "debug");
   lua_pushcfunction(_lua, _uni_delay);  lua_setfield(_lua, -2, "delay");
-  lua_pushcfunction(_lua, _uni_btn);    lua_setfield(_lua, -2, "btn");
-  lua_pushcfunction(_lua, _uni_update); lua_setfield(_lua, -2, "update");
   lua_pushcfunction(_lua, _uni_heap);   lua_setfield(_lua, -2, "heap");
   lua_pushcfunction(_lua, _uni_millis); lua_setfield(_lua, -2, "millis");
   lua_pushcfunction(_lua, _uni_beep);   lua_setfield(_lua, -2, "beep");
@@ -228,21 +261,32 @@ void LuaEngine::_registerBindings() {
   lua_getfield(_lua, -1, "preload");
   lua_pushcfunction(_lua, _lua_load_lcd); lua_setfield(_lua, -2, "uni.lcd");
   lua_pushcfunction(_lua, _lua_load_sd);  lua_setfield(_lua, -2, "uni.sd");
+  lua_pushcfunction(_lua, _lua_load_nav); lua_setfield(_lua, -2, "uni.nav");
   lua_pop(_lua, 2);
+
+  // Sprite metatable lives in the registry; attached to each sprite userdata.
+  _setupSpriteMetatable();
 }
 
 int LuaEngine::_lua_load_lcd(lua_State* L) {
   lua_newtable(L);
-  lua_pushcfunction(L, _lcd_clear);     lua_setfield(L, -2, "clear");
-  lua_pushcfunction(L, _lcd_print);     lua_setfield(L, -2, "print");
-  lua_pushcfunction(L, _lcd_rect);      lua_setfield(L, -2, "rect");
-  lua_pushcfunction(L, _lcd_line);      lua_setfield(L, -2, "line");
-  lua_pushcfunction(L, _lcd_color);     lua_setfield(L, -2, "color");
-  lua_pushcfunction(L, _lcd_textSize);  lua_setfield(L, -2, "textSize");
-  lua_pushcfunction(L, _lcd_textColor); lua_setfield(L, -2, "textColor");
-  lua_pushcfunction(L, _lcd_textDatum); lua_setfield(L, -2, "textDatum");
-  lua_pushcfunction(L, _lcd_w);         lua_setfield(L, -2, "w");
-  lua_pushcfunction(L, _lcd_h);         lua_setfield(L, -2, "h");
+  lua_pushcfunction(L, _lcd_clear);         lua_setfield(L, -2, "clear");
+  lua_pushcfunction(L, _lcd_fillScreen);    lua_setfield(L, -2, "fillScreen");
+  lua_pushcfunction(L, _lcd_print);         lua_setfield(L, -2, "print");
+  lua_pushcfunction(L, _lcd_rect);          lua_setfield(L, -2, "rect");
+  lua_pushcfunction(L, _lcd_line);          lua_setfield(L, -2, "line");
+  lua_pushcfunction(L, _lcd_circle);        lua_setfield(L, -2, "circle");
+  lua_pushcfunction(L, _lcd_fillCircle);    lua_setfield(L, -2, "fillCircle");
+  lua_pushcfunction(L, _lcd_roundRect);     lua_setfield(L, -2, "roundRect");
+  lua_pushcfunction(L, _lcd_fillRoundRect); lua_setfield(L, -2, "fillRoundRect");
+  lua_pushcfunction(L, _lcd_color);         lua_setfield(L, -2, "color");
+  lua_pushcfunction(L, _lcd_textSize);      lua_setfield(L, -2, "textSize");
+  lua_pushcfunction(L, _lcd_textColor);     lua_setfield(L, -2, "textColor");
+  lua_pushcfunction(L, _lcd_textDatum);     lua_setfield(L, -2, "textDatum");
+  lua_pushcfunction(L, _lcd_textWidth);     lua_setfield(L, -2, "textWidth");
+  lua_pushcfunction(L, _lcd_w);             lua_setfield(L, -2, "w");
+  lua_pushcfunction(L, _lcd_h);             lua_setfield(L, -2, "h");
+  lua_pushcfunction(L, _lcd_sprite);        lua_setfield(L, -2, "sprite");
   return 1;
 }
 
@@ -253,6 +297,19 @@ int LuaEngine::_lua_load_sd(lua_State* L) {
   lua_pushcfunction(L, _sd_append); lua_setfield(L, -2, "append");
   lua_pushcfunction(L, _sd_exists); lua_setfield(L, -2, "exists");
   lua_pushcfunction(L, _sd_list);   lua_setfield(L, -2, "list");
+  lua_pushcfunction(L, _sd_remove); lua_setfield(L, -2, "remove");
+  lua_pushcfunction(L, _sd_rename); lua_setfield(L, -2, "rename");
+  lua_pushcfunction(L, _sd_mkdir);  lua_setfield(L, -2, "mkdir");
+  lua_pushcfunction(L, _sd_size);   lua_setfield(L, -2, "size");
+  return 1;
+}
+
+int LuaEngine::_lua_load_nav(lua_State* L) {
+  lua_newtable(L);
+  lua_pushcfunction(L, _nav_btn);       lua_setfield(L, -2, "btn");
+  lua_pushcfunction(L, _nav_touchX);    lua_setfield(L, -2, "touchX");
+  lua_pushcfunction(L, _nav_touchY);    lua_setfield(L, -2, "touchY");
+  lua_pushcfunction(L, _nav_isTouched); lua_setfield(L, -2, "isTouched");
   return 1;
 }
 
@@ -281,29 +338,6 @@ int LuaEngine::_uni_delay(lua_State* L) {
     vTaskDelay(pdMS_TO_TICKS(10));
   }
   return 0;
-}
-
-int LuaEngine::_uni_update(lua_State* L) {
-  // No-op: Lua runs on its own FreeRTOS task while the main loop already
-  // calls Uni.update() every iteration. Calling it from here would race the
-  // I2C/SPI/keyboard recursive mutexes inside M5Unified and assert.
-  // We still yield so the main loop gets a clear time slice.
-  vTaskDelay(0);
-  return 0;
-}
-
-int LuaEngine::_uni_btn(lua_State* L) {
-  if (!Uni.Nav->wasPressed()) { lua_pushstring(L, "none"); return 1; }
-  switch (Uni.Nav->readDirection()) {
-    case INavigation::DIR_UP:    lua_pushstring(L, "up");    break;
-    case INavigation::DIR_DOWN:  lua_pushstring(L, "down");  break;
-    case INavigation::DIR_LEFT:  lua_pushstring(L, "left");  break;
-    case INavigation::DIR_RIGHT: lua_pushstring(L, "right"); break;
-    case INavigation::DIR_PRESS: lua_pushstring(L, "ok");    break;
-    case INavigation::DIR_BACK:  lua_pushstring(L, "back");  break;
-    default:                     lua_pushstring(L, "none");  break;
-  }
-  return 1;
 }
 
 int LuaEngine::_uni_heap(lua_State* L) {
@@ -476,5 +510,364 @@ int LuaEngine::_sd_list(lua_State* L) {
     lua_pushstring(L, "isDir"); lua_pushboolean(L, entries[i].isDir ? 1 : 0); lua_rawset(L, -3);
     lua_rawset(L, -3);
   }
+  return 1;
+}
+
+int LuaEngine::_sd_remove(lua_State* L) {
+  IStorage* s = _storage();
+  if (!s) { lua_pushboolean(L, 0); return 1; }
+  lua_pushboolean(L, s->deleteFile(luaL_checkstring(L, 1)) ? 1 : 0);
+  return 1;
+}
+
+int LuaEngine::_sd_rename(lua_State* L) {
+  IStorage* s = _storage();
+  if (!s) { lua_pushboolean(L, 0); return 1; }
+  const char* from = luaL_checkstring(L, 1);
+  const char* to   = luaL_checkstring(L, 2);
+  lua_pushboolean(L, s->renameFile(from, to) ? 1 : 0);
+  return 1;
+}
+
+int LuaEngine::_sd_mkdir(lua_State* L) {
+  IStorage* s = _storage();
+  if (!s) { lua_pushboolean(L, 0); return 1; }
+  lua_pushboolean(L, s->makeDir(luaL_checkstring(L, 1)) ? 1 : 0);
+  return 1;
+}
+
+int LuaEngine::_sd_size(lua_State* L) {
+  IStorage* s = _storage();
+  if (!s) { lua_pushnumber(L, -1); return 1; }
+  const char* path = luaL_checkstring(L, 1);
+  if (!s->exists(path)) { lua_pushnumber(L, -1); return 1; }
+  fs::File f = s->open(path, "r");
+  if (!f) { lua_pushnumber(L, -1); return 1; }
+  size_t sz = f.size();
+  f.close();
+  lua_pushnumber(L, (lua_Number)sz);
+  return 1;
+}
+
+// ── uni.lcd.* additions ───────────────────────────────────────────────
+
+int LuaEngine::_lcd_fillScreen(lua_State* L) {
+  LuaEngine* eng = _fromState(L);
+  if (!eng) return 0;
+  uint32_t c = (uint32_t)luaL_checknumber(L, 1);
+  Uni.Lcd.fillRect(eng->_bx, eng->_by, eng->_bw, eng->_bh, c);
+  return 0;
+}
+
+int LuaEngine::_lcd_textWidth(lua_State* L) {
+  const char* s = luaL_checkstring(L, 1);
+  lua_pushnumber(L, (lua_Number)Uni.Lcd.textWidth(s));
+  return 1;
+}
+
+int LuaEngine::_lcd_circle(lua_State* L) {
+  LuaEngine* eng = _fromState(L);
+  if (!eng) return 0;
+  int x = (int)luaL_checknumber(L, 1);
+  int y = (int)luaL_checknumber(L, 2);
+  int r = (int)luaL_checknumber(L, 3);
+  uint32_t c = (uint32_t)luaL_checknumber(L, 4);
+  Uni.Lcd.drawCircle(eng->_bx + x, eng->_by + y, r, c);
+  return 0;
+}
+
+int LuaEngine::_lcd_fillCircle(lua_State* L) {
+  LuaEngine* eng = _fromState(L);
+  if (!eng) return 0;
+  int x = (int)luaL_checknumber(L, 1);
+  int y = (int)luaL_checknumber(L, 2);
+  int r = (int)luaL_checknumber(L, 3);
+  uint32_t c = (uint32_t)luaL_checknumber(L, 4);
+  Uni.Lcd.fillCircle(eng->_bx + x, eng->_by + y, r, c);
+  return 0;
+}
+
+int LuaEngine::_lcd_roundRect(lua_State* L) {
+  LuaEngine* eng = _fromState(L);
+  if (!eng) return 0;
+  int x = (int)luaL_checknumber(L, 1);
+  int y = (int)luaL_checknumber(L, 2);
+  int w = (int)luaL_checknumber(L, 3);
+  int h = (int)luaL_checknumber(L, 4);
+  int r = (int)luaL_checknumber(L, 5);
+  uint32_t c = (uint32_t)luaL_checknumber(L, 6);
+  Uni.Lcd.drawRoundRect(eng->_bx + x, eng->_by + y, w, h, r, c);
+  return 0;
+}
+
+int LuaEngine::_lcd_fillRoundRect(lua_State* L) {
+  LuaEngine* eng = _fromState(L);
+  if (!eng) return 0;
+  int x = (int)luaL_checknumber(L, 1);
+  int y = (int)luaL_checknumber(L, 2);
+  int w = (int)luaL_checknumber(L, 3);
+  int h = (int)luaL_checknumber(L, 4);
+  int r = (int)luaL_checknumber(L, 5);
+  uint32_t c = (uint32_t)luaL_checknumber(L, 6);
+  Uni.Lcd.fillRoundRect(eng->_bx + x, eng->_by + y, w, h, r, c);
+  return 0;
+}
+
+// ── uni.lcd.sprite (off-screen buffer for flicker-free composing) ─────
+
+namespace {
+  // Userdata payload for sprite handles — held by Lua GC.
+  struct SpriteHandle { Sprite* sp; };
+  constexpr const char* kSpriteMeta = "uni.lcd.sprite";
+
+  SpriteHandle* _checkSpriteHandle(lua_State* L, int idx) {
+    return (SpriteHandle*)luaL_checkudata(L, idx, kSpriteMeta);
+  }
+  Sprite* _checkSprite(lua_State* L, int idx) {
+    SpriteHandle* h = _checkSpriteHandle(L, idx);
+    if (!h->sp) luaL_error(L, "sprite has been freed");
+    return h->sp;
+  }
+}
+
+void LuaEngine::_setupSpriteMetatable() {
+  // Registers the sprite metatable under kSpriteMeta in the registry once per
+  // engine init. Each lua_close() drops it; init() re-creates next run.
+  luaL_newmetatable(_lua, kSpriteMeta);
+  lua_pushcfunction(_lua, _sprite_gc); lua_setfield(_lua, -2, "__gc");
+
+  lua_newtable(_lua);
+  lua_pushcfunction(_lua, _sprite_push);          lua_setfield(_lua, -2, "push");
+  lua_pushcfunction(_lua, _sprite_fill);          lua_setfield(_lua, -2, "fill");
+  lua_pushcfunction(_lua, _sprite_rect);          lua_setfield(_lua, -2, "rect");
+  lua_pushcfunction(_lua, _sprite_line);          lua_setfield(_lua, -2, "line");
+  lua_pushcfunction(_lua, _sprite_circle);        lua_setfield(_lua, -2, "circle");
+  lua_pushcfunction(_lua, _sprite_fillCircle);    lua_setfield(_lua, -2, "fillCircle");
+  lua_pushcfunction(_lua, _sprite_roundRect);     lua_setfield(_lua, -2, "roundRect");
+  lua_pushcfunction(_lua, _sprite_fillRoundRect); lua_setfield(_lua, -2, "fillRoundRect");
+  lua_pushcfunction(_lua, _sprite_print);         lua_setfield(_lua, -2, "print");
+  lua_pushcfunction(_lua, _sprite_textColor);     lua_setfield(_lua, -2, "textColor");
+  lua_pushcfunction(_lua, _sprite_textSize);      lua_setfield(_lua, -2, "textSize");
+  lua_pushcfunction(_lua, _sprite_textDatum);     lua_setfield(_lua, -2, "textDatum");
+  lua_pushcfunction(_lua, _sprite_textWidth);     lua_setfield(_lua, -2, "textWidth");
+  lua_pushcfunction(_lua, _sprite_w);             lua_setfield(_lua, -2, "w");
+  lua_pushcfunction(_lua, _sprite_h);             lua_setfield(_lua, -2, "h");
+  lua_pushcfunction(_lua, _sprite_free);          lua_setfield(_lua, -2, "free");
+  lua_setfield(_lua, -2, "__index");
+
+  lua_pop(_lua, 1);
+}
+
+int LuaEngine::_lcd_sprite(lua_State* L) {
+  int w = (int)luaL_checknumber(L, 1);
+  int h = (int)luaL_checknumber(L, 2);
+  if (w <= 0 || h <= 0) { lua_pushnil(L); return 1; }
+
+  Sprite* sp = new Sprite(&Uni.Lcd);
+  if (!sp) { lua_pushnil(L); return 1; }
+  if (!sp->createSprite(w, h)) {
+    delete sp;
+    lua_pushnil(L);
+    return 1;
+  }
+  sp->setTextSize(1);
+  sp->setTextDatum(TL_DATUM);
+
+  auto* handle = (SpriteHandle*)lua_newuserdata(L, sizeof(SpriteHandle));
+  handle->sp = sp;
+  luaL_getmetatable(L, kSpriteMeta);
+  lua_setmetatable(L, -2);
+  return 1;
+}
+
+int LuaEngine::_sprite_gc(lua_State* L) {
+  auto* h = _checkSpriteHandle(L, 1);
+  if (h->sp) {
+    h->sp->deleteSprite();
+    delete h->sp;
+    h->sp = nullptr;
+  }
+  return 0;
+}
+
+int LuaEngine::_sprite_free(lua_State* L) {
+  auto* h = _checkSpriteHandle(L, 1);
+  if (h->sp) {
+    h->sp->deleteSprite();
+    delete h->sp;
+    h->sp = nullptr;
+  }
+  return 0;
+}
+
+int LuaEngine::_sprite_push(lua_State* L) {
+  LuaEngine* eng = _fromState(L);
+  Sprite* sp = _checkSprite(L, 1);
+  int x = (int)luaL_checknumber(L, 2);
+  int y = (int)luaL_checknumber(L, 3);
+  int bx = eng ? eng->_bx : 0;
+  int by = eng ? eng->_by : 0;
+  if (lua_gettop(L) >= 4 && !lua_isnil(L, 4)) {
+    uint32_t transp = (uint32_t)luaL_checknumber(L, 4);
+    sp->pushSprite(bx + x, by + y, transp);
+  } else {
+    sp->pushSprite(bx + x, by + y);
+  }
+  return 0;
+}
+
+int LuaEngine::_sprite_fill(lua_State* L) {
+  Sprite* sp = _checkSprite(L, 1);
+  uint32_t c = (uint32_t)luaL_checknumber(L, 2);
+  sp->fillSprite(c);
+  return 0;
+}
+
+int LuaEngine::_sprite_rect(lua_State* L) {
+  Sprite* sp = _checkSprite(L, 1);
+  int x = (int)luaL_checknumber(L, 2);
+  int y = (int)luaL_checknumber(L, 3);
+  int w = (int)luaL_checknumber(L, 4);
+  int h = (int)luaL_checknumber(L, 5);
+  uint32_t c = (uint32_t)luaL_checknumber(L, 6);
+  sp->fillRect(x, y, w, h, c);
+  return 0;
+}
+
+int LuaEngine::_sprite_line(lua_State* L) {
+  Sprite* sp = _checkSprite(L, 1);
+  int x0 = (int)luaL_checknumber(L, 2);
+  int y0 = (int)luaL_checknumber(L, 3);
+  int x1 = (int)luaL_checknumber(L, 4);
+  int y1 = (int)luaL_checknumber(L, 5);
+  uint32_t c = (uint32_t)luaL_checknumber(L, 6);
+  sp->drawLine(x0, y0, x1, y1, c);
+  return 0;
+}
+
+int LuaEngine::_sprite_circle(lua_State* L) {
+  Sprite* sp = _checkSprite(L, 1);
+  int x = (int)luaL_checknumber(L, 2);
+  int y = (int)luaL_checknumber(L, 3);
+  int r = (int)luaL_checknumber(L, 4);
+  uint32_t c = (uint32_t)luaL_checknumber(L, 5);
+  sp->drawCircle(x, y, r, c);
+  return 0;
+}
+
+int LuaEngine::_sprite_fillCircle(lua_State* L) {
+  Sprite* sp = _checkSprite(L, 1);
+  int x = (int)luaL_checknumber(L, 2);
+  int y = (int)luaL_checknumber(L, 3);
+  int r = (int)luaL_checknumber(L, 4);
+  uint32_t c = (uint32_t)luaL_checknumber(L, 5);
+  sp->fillCircle(x, y, r, c);
+  return 0;
+}
+
+int LuaEngine::_sprite_roundRect(lua_State* L) {
+  Sprite* sp = _checkSprite(L, 1);
+  int x = (int)luaL_checknumber(L, 2);
+  int y = (int)luaL_checknumber(L, 3);
+  int w = (int)luaL_checknumber(L, 4);
+  int h = (int)luaL_checknumber(L, 5);
+  int r = (int)luaL_checknumber(L, 6);
+  uint32_t c = (uint32_t)luaL_checknumber(L, 7);
+  sp->drawRoundRect(x, y, w, h, r, c);
+  return 0;
+}
+
+int LuaEngine::_sprite_fillRoundRect(lua_State* L) {
+  Sprite* sp = _checkSprite(L, 1);
+  int x = (int)luaL_checknumber(L, 2);
+  int y = (int)luaL_checknumber(L, 3);
+  int w = (int)luaL_checknumber(L, 4);
+  int h = (int)luaL_checknumber(L, 5);
+  int r = (int)luaL_checknumber(L, 6);
+  uint32_t c = (uint32_t)luaL_checknumber(L, 7);
+  sp->fillRoundRect(x, y, w, h, r, c);
+  return 0;
+}
+
+int LuaEngine::_sprite_print(lua_State* L) {
+  Sprite* sp = _checkSprite(L, 1);
+  int x         = (int)luaL_checknumber(L, 2);
+  int y         = (int)luaL_checknumber(L, 3);
+  const char* s = luaL_checkstring(L, 4);
+  sp->drawString(s, x, y);
+  return 0;
+}
+
+int LuaEngine::_sprite_textColor(lua_State* L) {
+  Sprite* sp = _checkSprite(L, 1);
+  uint32_t c = (uint32_t)luaL_checknumber(L, 2);
+  if (lua_gettop(L) >= 3 && !lua_isnil(L, 3)) {
+    uint32_t bg = (uint32_t)luaL_checknumber(L, 3);
+    sp->setTextColor(c, bg);
+  } else {
+    sp->setTextColor(c);
+  }
+  return 0;
+}
+
+int LuaEngine::_sprite_textSize(lua_State* L) {
+  Sprite* sp = _checkSprite(L, 1);
+  sp->setTextSize((uint8_t)luaL_checknumber(L, 2));
+  return 0;
+}
+
+int LuaEngine::_sprite_textDatum(lua_State* L) {
+  Sprite* sp = _checkSprite(L, 1);
+  sp->setTextDatum((uint8_t)luaL_checknumber(L, 2));
+  return 0;
+}
+
+int LuaEngine::_sprite_textWidth(lua_State* L) {
+  Sprite* sp = _checkSprite(L, 1);
+  const char* s = luaL_checkstring(L, 2);
+  lua_pushnumber(L, (lua_Number)sp->textWidth(s));
+  return 1;
+}
+
+int LuaEngine::_sprite_w(lua_State* L) {
+  Sprite* sp = _checkSprite(L, 1);
+  lua_pushnumber(L, (lua_Number)sp->width());
+  return 1;
+}
+
+int LuaEngine::_sprite_h(lua_State* L) {
+  Sprite* sp = _checkSprite(L, 1);
+  lua_pushnumber(L, (lua_Number)sp->height());
+  return 1;
+}
+
+// ── uni.nav.* ─────────────────────────────────────────────────────────
+
+int LuaEngine::_nav_btn(lua_State* L) {
+  if (!Uni.Nav || !Uni.Nav->wasPressed()) { lua_pushstring(L, "none"); return 1; }
+  switch (Uni.Nav->readDirection()) {
+    case INavigation::DIR_UP:    lua_pushstring(L, "up");    break;
+    case INavigation::DIR_DOWN:  lua_pushstring(L, "down");  break;
+    case INavigation::DIR_LEFT:  lua_pushstring(L, "left");  break;
+    case INavigation::DIR_RIGHT: lua_pushstring(L, "right"); break;
+    case INavigation::DIR_PRESS: lua_pushstring(L, "ok");    break;
+    case INavigation::DIR_BACK:  lua_pushstring(L, "back");  break;
+    default:                     lua_pushstring(L, "none");  break;
+  }
+  return 1;
+}
+
+int LuaEngine::_nav_touchX(lua_State* L) {
+  lua_pushnumber(L, Uni.Nav ? (lua_Number)Uni.Nav->lastTouchX() : -1);
+  return 1;
+}
+
+int LuaEngine::_nav_touchY(lua_State* L) {
+  lua_pushnumber(L, Uni.Nav ? (lua_Number)Uni.Nav->lastTouchY() : -1);
+  return 1;
+}
+
+int LuaEngine::_nav_isTouched(lua_State* L) {
+  lua_pushboolean(L, (Uni.Nav && Uni.Nav->isPressed()) ? 1 : 0);
   return 1;
 }
