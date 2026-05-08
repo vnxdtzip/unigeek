@@ -1,5 +1,6 @@
 -- btntest.lua — shows each button press on screen. Back exits.
 local lcd = require("uni.lcd")
+local nav = require("uni.nav")
 
 local W = lcd.w()
 local H = lcd.h()
@@ -19,8 +20,7 @@ lcd.textSize(2)
 local last = ""
 
 while true do
-  uni.update()
-  local btn = uni.btn()
+  local btn = nav.btn()
   if btn == "back" then break end
 
   if btn ~= "none" and btn ~= last then

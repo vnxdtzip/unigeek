@@ -2,6 +2,7 @@
 -- Locals persist for the session. Back breaks the loop; exit() returns to browser.
 
 local lcd = require("uni.lcd")
+local nav = require("uni.nav")
 
 local W     = lcd.w()
 local H     = lcd.h()
@@ -11,8 +12,7 @@ local BLACK = lcd.color(  0,   0,   0)
 local frame = 0
 
 while true do
-  uni.update()
-  local btn = uni.btn()
+  local btn = nav.btn()
   if btn == "back" then break end
 
   frame = frame + 1

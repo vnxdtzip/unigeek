@@ -3,6 +3,7 @@
 -- No globals, no _ready guard, no "x = x or 0" boilerplate needed.
 
 local lcd = require("uni.lcd")
+local nav = require("uni.nav")
 
 local W, H = lcd.w(), lcd.h()
 
@@ -23,8 +24,7 @@ lcd.rect(0,     0,     2, H, C_WALL)
 lcd.rect(W - 2, 0,     2, H, C_WALL)
 
 while true do
-  uni.update()
-  local btn = uni.btn()
+  local btn = nav.btn()
   if btn == "back" then break end
 
   -- Erase ball at old position (overdraw — no full clear, no flicker)
