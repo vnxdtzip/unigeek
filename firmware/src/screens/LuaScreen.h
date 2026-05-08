@@ -26,7 +26,6 @@ private:
   LuaEngine      _engine;
   LogView        _log;
   String         _errBuf;
-  String         _scriptSrc;
   String         _currentDir;
 
   void _loadDir(const String& path);

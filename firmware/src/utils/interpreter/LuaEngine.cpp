@@ -13,24 +13,39 @@ static const char kRegKey = '\0';
 
 // ── Allocator: always uses internal SRAM ──────────────────────────────
 
-void* LuaEngine::_alloc(void*, void* ptr, size_t, size_t nsize) {
+void* LuaEngine::_alloc(void*, void* ptr, size_t osize, size_t nsize) {
   if (nsize == 0) {
     heap_caps_free(ptr);
     return nullptr;
   }
-  uint32_t caps =
-#ifdef BOARD_HAS_PSRAM
-    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
-#else
-    MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
-#endif
-  return heap_caps_realloc(ptr, nsize, caps);
+  // VM heap stays in internal SRAM on every board: Lua's many small reallocs
+  // and pointer-chasing GC are unsafe under PSRAM cache contention.
+  uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+  void* p = heap_caps_realloc(ptr, nsize, caps);
+  if (!p) {
+    Serial.printf("[Lua] ALLOC FAIL nsize=%u osize=%u freeInt=%u freePsram=%u largestPsram=%u\n",
+      (unsigned)nsize, (unsigned)osize,
+      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+  }
+  return p;
 }
 
 // ── Count hook: fires every 1000 instructions to check exit flag ──────
 
 void LuaEngine::_countHook(lua_State* L, lua_Debug*) {
   LuaEngine* eng = _fromState(L);
+  // Yield every hook tick so the loop task / WDT can run.
+  vTaskDelay(0);
+  // Heartbeat every ~100k instructions (hook fires per 1000): heap watch
+  static uint32_t tickCount = 0;
+  if ((++tickCount % 100) == 0) {
+    Serial.printf("[Lua] tick=%u freeInt=%u freePsram=%u\n",
+      (unsigned)tickCount,
+      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+  }
   if (eng && eng->_exitRequested) {
     lua_pushlightuserdata(L, &LuaEngine::exitSentinel);
     lua_error(L);
@@ -51,8 +66,15 @@ LuaEngine* LuaEngine::_fromState(lua_State* L) {
 
 bool LuaEngine::init() {
   if (_lua) deinit();
+  Serial.printf("[Lua] init pre  freeInt=%u freePsram=%u largestPsram=%u\n",
+    (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+    (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+    (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
   _lua = lua_newstate(_alloc, nullptr);
-  if (!_lua) return false;
+  if (!_lua) { Serial.println("[Lua] lua_newstate FAILED"); return false; }
+  Serial.printf("[Lua] init post freeInt=%u freePsram=%u\n",
+    (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+    (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
   lua_pushlightuserdata(_lua, (void*)&kRegKey);
   lua_pushlightuserdata(_lua, this);
@@ -68,6 +90,17 @@ bool LuaEngine::init() {
 }
 
 void LuaEngine::deinit() {
+  // If a script task is running, request exit and wait for it to finish before
+  // touching the Lua state — lua_close from another task would race.
+  if (_status == STATUS_RUNNING) {
+    _exitRequested = true;
+    while (_status == STATUS_RUNNING) {
+      vTaskDelay(pdMS_TO_TICKS(10));
+    }
+  }
+  _status = STATUS_IDLE;
+  _task   = nullptr;
+
   if (_chunkRef != LUA_NOREF && _lua) {
     luaL_unref(_lua, LUA_REGISTRYINDEX, _chunkRef);
     _chunkRef = LUA_NOREF;
@@ -86,32 +119,91 @@ bool LuaEngine::loadScript(const char* src, String& errOut) {
   }
   _exitRequested = false;
 
-  int rc = luaL_loadbuffer(_lua, src, strlen(src), "script");
+  size_t srcLen = strlen(src);
+  Serial.printf("[Lua] load bytes=%u freeInt=%u freePsram=%u\n",
+    (unsigned)srcLen,
+    (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+    (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+  int rc = luaL_loadbuffer(_lua, src, srcLen, "script");
   if (rc != 0) {
     errOut = lua_tostring(_lua, -1);
+    Serial.printf("[Lua] load FAIL: %s\n", errOut.c_str());
     lua_pop(_lua, 1);
     return false;
   }
   _chunkRef = luaL_ref(_lua, LUA_REGISTRYINDEX);
+  Serial.println("[Lua] load OK");
   return true;
 }
 
 // ── Loop step ─────────────────────────────────────────────────────────
 
-bool LuaEngine::stepLoop(String& errOut) {
-  if (!_lua || _chunkRef == LUA_NOREF || _exitRequested) return false;
+// Lua execution lives on its own FreeRTOS task: a generous 32 KB stack so the
+// VM + str_format-style recursion can't blow the loop task's 8 KB stack and
+// stomp the heap. The first stepLoop() spawns the task; later calls poll its
+// status. The task self-deletes after pcall returns.
+void LuaEngine::_taskEntry(void* arg) {
+  LuaEngine* eng = (LuaEngine*)arg;
+  lua_State* L   = eng->_lua;
 
-  lua_rawgeti(_lua, LUA_REGISTRYINDEX, _chunkRef);
-  int rc = lua_pcall(_lua, 0, 0, 0);
-  if (rc == 0) return false; // script returned normally — clean exit
+  Serial.printf("[Lua] task start freeInt=%u\n",
+    (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
-  if (lua_islightuserdata(_lua, -1) &&
-      lua_touserdata(_lua, -1) == &LuaEngine::exitSentinel) {
-    lua_pop(_lua, 1);
-    return false; // clean exit via exit()
+  lua_rawgeti(L, LUA_REGISTRYINDEX, eng->_chunkRef);
+  int rc = lua_pcall(L, 0, 0, 0);
+
+  Status next;
+  if (rc == 0) {
+    next = STATUS_DONE_OK;
+  } else if (lua_islightuserdata(L, -1) &&
+             lua_touserdata(L, -1) == &LuaEngine::exitSentinel) {
+    lua_pop(L, 1);
+    next = STATUS_DONE_EXIT;
+  } else {
+    eng->_taskErrOut = lua_isstring(L, -1) ? lua_tostring(L, -1) : "unknown error";
+    lua_pop(L, 1);
+    next = STATUS_DONE_ERR;
   }
-  errOut = lua_isstring(_lua, -1) ? lua_tostring(_lua, -1) : "unknown error";
-  lua_pop(_lua, 1);
+  Serial.printf("[Lua] task end rc=%d freeInt=%u\n", rc,
+    (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+
+  eng->_task   = nullptr;
+  eng->_status = next;       // publish AFTER clearing handle
+  vTaskDelete(nullptr);
+}
+
+bool LuaEngine::stepLoop(String& errOut) {
+  if (!_lua || _chunkRef == LUA_NOREF) return false;
+
+  if (_status == STATUS_IDLE) {
+    if (_exitRequested) return false;
+    _taskErrOut = "";
+    _status = STATUS_RUNNING;
+    TaskHandle_t handle = nullptr;
+    BaseType_t ok = xTaskCreatePinnedToCore(
+      _taskEntry, "lua", 32 * 1024, this, 1, &handle, 1);
+    if (ok != pdPASS) {
+      _status = STATUS_IDLE;
+      errOut  = "task create failed";
+      Serial.println("[Lua] task create FAIL");
+      return false;
+    }
+    _task = (void*)handle;
+    Serial.printf("[Lua] task spawned freeInt=%u\n",
+      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    return true;
+  }
+
+  if (_status == STATUS_RUNNING) return true;
+
+  Status s = _status;
+  _status  = STATUS_IDLE;
+  if (s == STATUS_DONE_ERR) {
+    errOut = _taskErrOut;
+    Serial.printf("[Lua] error: %s\n", errOut.c_str());
+  } else if (s == STATUS_DONE_EXIT) {
+    Serial.println("[Lua] exit() sentinel");
+  }
   return false;
 }
 
@@ -192,7 +284,11 @@ int LuaEngine::_uni_delay(lua_State* L) {
 }
 
 int LuaEngine::_uni_update(lua_State* L) {
-  Uni.update();
+  // No-op: Lua runs on its own FreeRTOS task while the main loop already
+  // calls Uni.update() every iteration. Calling it from here would race the
+  // I2C/SPI/keyboard recursive mutexes inside M5Unified and assert.
+  // We still yield so the main loop gets a clear time slice.
+  vTaskDelay(0);
   return 0;
 }
 
@@ -326,7 +422,13 @@ int LuaEngine::_sd_read(lua_State* L) {
   IStorage* s = _storage();
   if (!s) { lua_pushnil(L); return 1; }
   const char* path = luaL_checkstring(L, 1);
+  if (!s->exists(path)) {
+    Serial.printf("[Lua] sd.read miss '%s' -> nil\n", path);
+    lua_pushnil(L);
+    return 1;
+  }
   String data = s->readFile(path);
+  Serial.printf("[Lua] sd.read '%s' bytes=%u\n", path, (unsigned)data.length());
   lua_pushstring(L, data.c_str());
   return 1;
 }

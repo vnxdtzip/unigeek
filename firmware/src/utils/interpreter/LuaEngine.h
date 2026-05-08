@@ -31,12 +31,25 @@ public:
   }
 
 private:
+  enum Status : uint8_t {
+    STATUS_IDLE,
+    STATUS_RUNNING,
+    STATUS_DONE_OK,
+    STATUS_DONE_EXIT,
+    STATUS_DONE_ERR,
+  };
+
   lua_State* _lua      = nullptr;
   int        _chunkRef = LUA_NOREF;
   bool       _exitRequested = false;
   int        _bx = 0, _by = 0, _bw = 240, _bh = 200;
   uint32_t   _textFg = 0xFFFF;
 
+  void*             _task        = nullptr;  // TaskHandle_t (opaque to avoid header pulls)
+  volatile Status   _status      = STATUS_IDLE;
+  String            _taskErrOut;
+
+  static void  _taskEntry(void* arg);
   static void* _alloc(void* ud, void* ptr, size_t osize, size_t nsize);
   static void  _countHook(lua_State* L, lua_Debug* ar);
   static LuaEngine* _fromState(lua_State* L);

@@ -2,6 +2,7 @@
 #include "core/Device.h"
 #include "core/INavigation.h"
 #include "core/ScreenManager.h"
+#include <esp_heap_caps.h>
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -82,16 +83,55 @@ void LuaScreen::_startScript(const String& path) {
   _log.clear();
   _errBuf = "";
 
-  _scriptSrc = Uni.Storage->readFile(path.c_str());
-  if (_scriptSrc.isEmpty()) {
-    Serial.println("[lua] empty or missing: " + path);
+  // Stream the file into a sized buffer. Big scripts spill to PSRAM (when the
+  // board has it) so they don't hog scarce internal SRAM; the buffer is freed
+  // right after compile since Lua keeps its own bytecode copy.
+  fs::File f = Uni.Storage->open(path.c_str(), "r");
+  if (!f) {
+    Serial.println("[lua] missing: " + path);
+    _log.addLine("[error] empty or missing file", TFT_RED);
+    _state = STATE_DONE;
+    render();
+    return;
+  }
+  size_t size = f.size();
+  if (size == 0) {
+    f.close();
+    Serial.println("[lua] empty: " + path);
     _log.addLine("[error] empty or missing file", TFT_RED);
     _state = STATE_DONE;
     render();
     return;
   }
 
+  static constexpr size_t kPsramThreshold = 2048;
+  uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+#ifdef BOARD_HAS_PSRAM
+  if (size >= kPsramThreshold) caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+#endif
+  char* buf = (char*)heap_caps_malloc(size + 1, caps);
+#ifdef BOARD_HAS_PSRAM
+  // Fall back to internal if PSRAM allocation fails for any reason.
+  if (!buf && (caps & MALLOC_CAP_SPIRAM)) {
+    buf = (char*)heap_caps_malloc(size + 1, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  }
+#endif
+  if (!buf) {
+    f.close();
+    Serial.printf("[lua] alloc fail size=%u\n", (unsigned)size);
+    _log.addLine("[error] out of memory", TFT_RED);
+    _state = STATE_DONE;
+    render();
+    return;
+  }
+  size_t n = f.readBytes(buf, size);
+  f.close();
+  buf[n] = '\0';
+  Serial.printf("[lua] script size=%u in %s\n", (unsigned)n,
+    (caps & MALLOC_CAP_SPIRAM) ? "PSRAM" : "INTERNAL");
+
   if (!_engine.init()) {
+    heap_caps_free(buf);
     Serial.println("[lua] lua_newstate failed (OOM?)");
     _log.addLine("[error] lua_newstate failed (OOM?)", TFT_RED);
     _state = STATE_DONE;
@@ -102,7 +142,10 @@ void LuaScreen::_startScript(const String& path) {
   _engine.setBodyRect(0, 0, Uni.Lcd.width(), Uni.Lcd.height());
 
   String compileErr;
-  if (!_engine.loadScript(_scriptSrc.c_str(), compileErr)) {
+  bool ok = _engine.loadScript(buf, compileErr);
+  heap_caps_free(buf);
+
+  if (!ok) {
     Serial.println("[lua] syntax: " + compileErr);
     _log.addLine(("[syntax] " + compileErr).c_str(), TFT_RED);
     _engine.deinit();
@@ -113,6 +156,14 @@ void LuaScreen::_startScript(const String& path) {
 
   Uni.Lcd.setTextDatum(TL_DATUM);
   Uni.Lcd.fillScreen(TFT_BLACK);
+  // Silence the touch-overlay paint while Lua owns the screen: the Lua task
+  // writes to the display SPI bus every frame, so a concurrent _paintZone()
+  // from the loop task crosses the SPI mutex and asserts. Only touch boards
+  // actually paint the overlay; on cardputer / t_lora_pager `suppressKeys`
+  // additionally gates keyboard input, so we must NOT set it there.
+#ifdef DEVICE_HAS_TOUCH_NAV
+  if (Uni.Nav) Uni.Nav->setSuppressKeys(true);
+#endif
   _state = STATE_RUNNING;
 }
 
@@ -120,6 +171,9 @@ void LuaScreen::_startScript(const String& path) {
 
 void LuaScreen::_handleDone(bool isError) {
   _engine.deinit();
+#ifdef DEVICE_HAS_TOUCH_NAV
+  if (Uni.Nav) Uni.Nav->setSuppressKeys(false);
+#endif
   if (!isError) {
     _state = STATE_BROWSE;
     _loadDir(_currentDir);
