@@ -1,8 +1,11 @@
 -- dino.lua — Dino Jump.
--- Mostly direct overdraw (cheap, fast). The dino sits in a small sprite-backed
--- "lane" that spans its full vertical motion range, so when it jumps the new
--- pose appears in one push instead of an erase-then-draw flash. Cactus motion
--- stays as plain overdraw — moving every frame already masks any erase blink.
+-- Two small per-element sprites (UniGeek-style):
+--   * dino lane: fixed-X strip covering the full jump arc, atomic dino push
+--   * cactus lane: travelling sprite that includes a black erase-trail so
+--     each push covers both the new position and where the cactus just was
+-- Where the cactus crosses the dino lane, the dino sprite composes the
+-- overlapping cactus slice itself, so the cactus stays visible behind the
+-- dino. Both lanes degrade to overdraw if their sprites can't allocate.
 
 local lcd = require("uni.lcd")
 local sd  = require("uni.sd")
@@ -24,18 +27,27 @@ local C_YELLOW = lcd.color(255, 220,   0)
 local C_GREY   = lcd.color( 70,  70,  70)
 local C_BLACK  = lcd.color(  0,   0,   0)
 
--- Dino sprite "lane" — fixed x band wide enough for body+head+legs, tall
--- enough to span ground rest pose to peak-of-jump. ~19 × ~50 ≈ 1.9 KB.
+-- Dino lane — fixed x band; tall enough for the full jump arc. With
+-- JUMP_FORCE=-9.5 / GRAVITY=0.75 the peak rise is ~65 px above ground rest;
+-- add room for the head (4 px above body top) plus a margin.
 local LANE_X = DX - 2
 local LANE_W = DW + 8
-local LANE_Y = GY - DH - 28
+local LANE_Y = GY - DH - 80
 local LANE_H = (GY + 5) - LANE_Y
 local GROUND_Y_IN_LANE = (GY + 1) - LANE_Y
 
 local dino_sp = lcd.sprite(LANE_W, LANE_H)
-if not dino_sp then
-  uni.debug("dino: sprite OOM, falling back to overdraw")
-end
+if not dino_sp then uni.debug("dino: lane sprite OOM") end
+
+-- Cactus lane — travels with the cactus. Width must cover one frame's worth
+-- of leftward motion (≈speed) on top of the cactus's own footprint, so each
+-- push paints the new cactus and erases where it just was in one shot.
+local CACTUS_LANE_W   = 32
+local CACTUS_LANE_H   = 42
+local CACTUS_LANE_TOP = GY - CACTUS_LANE_H
+
+local cactus_sp = lcd.sprite(CACTUS_LANE_W, CACTUS_LANE_H)
+if not cactus_sp then uni.debug("cactus: lane sprite OOM") end
 
 local hiScore = 0
 local raw = sd.read("/unigeek/games/lua_dino.txt")
@@ -64,9 +76,8 @@ local function _reset()
   prevOH = math.floor(obsH)
 end
 
--- Compose the dino into a generic surface using the same shape both for the
--- on-screen overdraw path and the sprite-buffered path. `drawRect` matches
--- lcd.rect's signature; (ox, oy) is where the dino's body top-left lands.
+-- Compose dino into a generic surface. drawRect(x,y,w,h,c) is lcd.rect or a
+-- sprite-rect closure; (ox, oy) is where the body's top-left lands.
 local function _composeDino(drawRect, ox, oy, running)
   drawRect(ox,          oy,     DW, DH, C_GREEN)
   drawRect(ox + DW - 4, oy - 4,  7,  6, C_GREEN)
@@ -81,31 +92,64 @@ local function _composeDino(drawRect, ox, oy, running)
   end
 end
 
+-- Compose cactus into a generic surface. The (origin_x, origin_y) is the
+-- screen position of the surface's (0, 0) — pass (0, 0) for direct lcd
+-- drawing, or (sprite_origin_x, sprite_origin_y) for a sprite.
+local function _composeCactus(drawRect, ox, oh, origin_x, origin_y)
+  local ix = math.floor(ox) - origin_x
+  local iy = math.floor(oh)
+  local sy = (GY - iy) - origin_y
+  drawRect(ix, sy, OW, iy, C_ORANGE)
+  if iy > 14 then
+    drawRect(ix - 4, sy + 5, 4, 5, C_ORANGE)
+    drawRect(ix - 4, sy + 5, 5, 3, C_ORANGE)
+  end
+  if iy > 10 then
+    drawRect(ix + OW,     sy + 8, 4, 4, C_ORANGE)
+    drawRect(ix + OW - 1, sy + 8, 5, 3, C_ORANGE)
+  end
+end
+
 local function _drawDinoLcd(dy, running)
   _composeDino(lcd.rect, DX, math.floor(dy), running)
 end
 
-local function _drawDinoSprite(dy, running)
+local function _drawCactusLcd(ox, oh)
+  _composeCactus(lcd.rect, ox, oh, 0, 0)
+end
+
+local function _drawDinoSprite(dy, running, cactus_x, cactus_h)
   dino_sp:fill(C_BLACK)
   dino_sp:rect(0, GROUND_Y_IN_LANE, LANE_W, 2, C_GREY)
+
+  -- Compose any cactus pixels that fall inside the lane so the cactus stays
+  -- visible behind the dino. Sprite drawing clips to bounds, so calling
+  -- _composeCactus when the cactus is far away is harmless.
+  local cleft  = math.floor(cactus_x) - 4
+  local cright = math.floor(cactus_x) + OW + 4
+  if cright >= LANE_X and cleft < LANE_X + LANE_W then
+    _composeCactus(
+      function(x, y, w, h, c) dino_sp:rect(x, y, w, h, c) end,
+      cactus_x, cactus_h, LANE_X, LANE_Y)
+  end
+
   _composeDino(
     function(x, y, w, h, c) dino_sp:rect(x, y, w, h, c) end,
     DX - LANE_X, math.floor(dy) - LANE_Y, running)
   dino_sp:push(LANE_X, LANE_Y)
 end
 
-local function _drawCactus(ox, oh)
-  local ix = math.floor(ox)
-  local iy = math.floor(oh)
-  lcd.rect(ix,       GY - iy, OW, iy, C_ORANGE)
-  if iy > 14 then
-    lcd.rect(ix - 4, GY - iy + 5, 4, 5, C_ORANGE)
-    lcd.rect(ix - 4, GY - iy + 5, 5, 3, C_ORANGE)
-  end
-  if iy > 10 then
-    lcd.rect(ix + OW,     GY - iy + 8, 4, 4, C_ORANGE)
-    lcd.rect(ix + OW - 1, GY - iy + 8, 5, 3, C_ORANGE)
-  end
+local function _drawCactusSprite(ox, oh)
+  -- Sprite anchored at the cactus's leftmost pixel (left arm extends -4).
+  -- The sprite's right edge intentionally extends past the cactus's right
+  -- arm so the trailing area (left blank by fill) erases the previous
+  -- frame's cactus position in one push.
+  local origin_x = math.floor(ox) - 4
+  cactus_sp:fill(C_BLACK)
+  _composeCactus(
+    function(x, y, w, h, c) cactus_sp:rect(x, y, w, h, c) end,
+    ox, oh, origin_x, CACTUS_LANE_TOP)
+  cactus_sp:push(origin_x, CACTUS_LANE_TOP)
 end
 
 local function _collision()
@@ -217,19 +261,24 @@ while true do
       uni.beep(660, 30)
     end
 
-    -- Cactus erase (the lane sprite handles dino erase implicitly).
-    if pox < W + 5 then
-      lcd.rect(pox - 5, GY - poh - 2, OW + 11, poh + 5, C_BLACK)
-    end
-    -- Repaint ground line outside the dino lane only — the lane redraws its
-    -- own slice of the ground when it pushes, so blasting the full strip here
-    -- would just race the lane push every frame.
+    -- Ground line outside the dino lane (the lane redraws its own slice).
     lcd.rect(0, GY + 1, LANE_X, 2, C_GREY)
     lcd.rect(LANE_X + LANE_W, GY + 1, W - (LANE_X + LANE_W), 2, C_GREY)
 
-    _drawCactus(obsX, obsH)
+    -- Cactus first — its sprite both erases the prior frame and paints the
+    -- new cactus. Push order matters: dino sprite goes last so it owns the
+    -- final pixels in the lane area and the cactus slice is composed inside.
+    if cactus_sp then
+      _drawCactusSprite(obsX, obsH)
+    else
+      if pox < W + 5 then
+        lcd.rect(pox - 5, GY - poh - 2, OW + 11, poh + 5, C_BLACK)
+      end
+      _drawCactusLcd(obsX, obsH)
+    end
+
     if dino_sp then
-      _drawDinoSprite(dinoY, onGnd)
+      _drawDinoSprite(dinoY, onGnd, obsX, obsH)
     else
       lcd.rect(DX - 1, prevDY - 5, DW + 6, DH + 11, C_BLACK)
       _drawDinoLcd(dinoY, onGnd)
@@ -264,4 +313,5 @@ while true do
   uni.delay(16)
 end
 
-if dino_sp then dino_sp:free() end
+if dino_sp   then dino_sp:free()   end
+if cactus_sp then cactus_sp:free() end
