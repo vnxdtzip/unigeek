@@ -119,6 +119,7 @@ void WifiEapolBruteForceScreen::onInit() {
   if (_builtInSublabel[0] == '\0')
     snprintf(_builtInSublabel, sizeof(_builtInSublabel), "%d entries", kTestPasswordCount);
 
+  Uni.Storage->makeDir(PCAP_DIR);
   Uni.Storage->makeDir(PASS_DIR);
   _selectedPcap[0]      = '\0';
   _selectedWordlist[0]  = '\0';
@@ -275,18 +276,26 @@ bool WifiEapolBruteForceScreen::_listFiles(const char* ext) {
   if (!Uni.Storage || !Uni.Storage->isAvailable()) return false;
   BrowseFileView::showLoading();
 
-  IStorage::DirEntry entries[kMaxFiles];
+  // Heap-allocate to avoid ~4.8 KB of stack pressure that overflows on
+  // low-headroom boards (StickS3 + WebAuthn leaves very little stack free).
+  struct RawEntry { String base; bool isDir; };
+
+  auto* entries = new IStorage::DirEntry[kMaxFiles];
+  if (!entries) return false;
   uint8_t count = Uni.Storage->listDir(dir, entries, kMaxFiles);
 
-  // Collect base names for both groups
-  struct RawEntry { String base; bool isDir; };
-  RawEntry raw[kMaxFiles];
+  auto* raw = new RawEntry[kMaxFiles];
+  if (!raw) { delete[] entries; return false; }
+
   int rawCount = 0;
   for (uint8_t i = 0; i < count && rawCount < kMaxFiles; i++) {
-    String name = entries[i].name;
+    const String& name = entries[i].name;
     int slash = name.lastIndexOf('/');
-    raw[rawCount++] = { (slash >= 0) ? name.substring(slash + 1) : name, entries[i].isDir };
+    raw[rawCount].base  = (slash >= 0) ? name.substring(slash + 1) : name;
+    raw[rawCount].isDir = entries[i].isDir;
+    rawCount++;
   }
+  delete[] entries;  // done with raw dir listing — free before sort+build
 
   // Insertion sort: dirs before files, each group alphabetically
   for (int i = 1; i < rawCount; i++) {
@@ -325,6 +334,7 @@ bool WifiEapolBruteForceScreen::_listFiles(const char* ext) {
       _fileCount++;
     }
   }
+  delete[] raw;
 
   // Built-in test wordlist only at the password root
   if (ext == nullptr && strcmp(dir, PASS_DIR) == 0 && _fileCount < kMaxFiles) {
@@ -690,12 +700,30 @@ void WifiEapolBruteForceScreen::_startCrack() {
   // Create queue + semaphore for dual-core
   _ctx.queue   = xQueueCreate(QUEUE_DEPTH, sizeof(PwEntry));
   _ctx.doneSem = xSemaphoreCreateBinary();
+  if (!_ctx.queue || !_ctx.doneSem) {
+    if (_ctx.queue)   { vQueueDelete(_ctx.queue);       _ctx.queue   = nullptr; }
+    if (_ctx.doneSem) { vSemaphoreDelete(_ctx.doneSem); _ctx.doneSem = nullptr; }
+    ShowStatusAction::show("Not enough memory to start.");
+    render();
+    return;
+  }
 
   // Worker on core 0 — pure cracking from queue
-  xTaskCreatePinnedToCore(_workerTask, "wpa2_w", 8192, &_ctx, 1, &_ctx.workerHandle, 0);
-
+  BaseType_t wOk = xTaskCreatePinnedToCore(_workerTask, "wpa2_w", 8192, &_ctx, 1, &_ctx.workerHandle, 0);
   // Producer + cracker on core 1 — reads wordlist, feeds queue, also cracks
-  xTaskCreatePinnedToCore(_crackTask, "wpa2_p", 8192, &_ctx, 1, &_taskHandle, 1);
+  BaseType_t pOk = xTaskCreatePinnedToCore(_crackTask,  "wpa2_p", 8192, &_ctx, 1, &_taskHandle,       1);
+  if (wOk != pdPASS || pOk != pdPASS) {
+    // Send poison pill so a successfully-started worker can exit cleanly
+    PwEntry poison; memset(&poison, 0, sizeof(poison));
+    xQueueSend(_ctx.queue, &poison, portMAX_DELAY);
+    if (wOk == pdPASS) { xSemaphoreTake(_ctx.doneSem, pdMS_TO_TICKS(1000)); vTaskDelete(_ctx.workerHandle); _ctx.workerHandle = nullptr; }
+    if (pOk == pdPASS) { vTaskDelete(_taskHandle); _taskHandle = nullptr; }
+    vQueueDelete(_ctx.queue);       _ctx.queue   = nullptr;
+    vSemaphoreDelete(_ctx.doneSem); _ctx.doneSem = nullptr;
+    ShowStatusAction::show("Failed to start crack tasks.");
+    render();
+    return;
+  }
 
   _state       = STATE_CRACKING;
   _chromeDrawn = false;
