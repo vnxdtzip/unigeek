@@ -840,6 +840,7 @@ config.get(any_other_key)    -- string ("" if unset)
 10. Save game state to /unigeek/games/<name>.txt (not /unigeek/lua/).
 11. Sprites are not free — a full-screen RGB565 sprite is w*h*2 bytes of internal heap; check for nil.
 12. input.* / dialog.* block the script. The runner's main loop drives the popup, then resumes the script.
+13. NEVER write `function(…) … end` inline as a callback argument inside the while loop. Each evaluation allocates a new closure object; at 60 fps this fragments internal SRAM and causes not-enough-memory crashes after extended play. Declare the function as a local BEFORE the loop and pass the local name.
 ```
 
 ---
@@ -909,6 +910,7 @@ end
 | Overdraw not clear | Erase only moved objects; never `lcd.clear()` / `lcd.fillScreen()` inside the loop |
 | Sprite for complex frames | Compose into `lcd.sprite(w,h)` and `push()` once when overdraw becomes intricate |
 | Sprite OOM | Full-screen RGB565 = `w*h*2` bytes; `lcd.sprite()` returns `nil` on failure — always check |
+| No closures in the hot loop | Writing `function(x,y,w,h,c) sp:rect(x,y,w,h,c) end` inline as a callback argument allocates a new closure object every call. At 60 fps this fragments internal SRAM and eventually causes `not enough memory` after ~10 minutes. Pre-allocate the function once before the `while true` loop and pass the local reference instead. |
 | No `//` integer division | Lua 5.1 — use `math.floor(a/b)` |
 | No `io`/`os` | All file access goes through `sd.*` |
 | Colour is a number | `lcd.color()` returns a plain number — store in a local before the loop |
