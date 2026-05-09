@@ -15,7 +15,8 @@ uint8_t BrowseFileView::load(BaseScreen* host, const String& dir,
 
   if (!Uni.Storage || !Uni.Storage->isAvailable()) return 0;
 
-  IStorage::DirEntry raw[kCap];
+  auto* raw = new IStorage::DirEntry[kCap];
+  if (!raw) return 0;
   uint8_t n = Uni.Storage->listDir(dir.c_str(), raw, kCap);
 
   // Sort: dirs first, then alphabetical (case-insensitive)
@@ -45,5 +46,6 @@ uint8_t BrowseFileView::load(BaseScreen* host, const String& dir,
                                 raw[i].isDir ? "DIR" : fileSublabel };
     _count++;
   }
+  delete[] raw;
   return _count;
 }

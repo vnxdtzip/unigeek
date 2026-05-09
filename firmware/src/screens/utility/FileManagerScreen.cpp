@@ -281,18 +281,37 @@ void FileManagerScreen::_handleMenuAction(uint8_t index)
 
 bool FileManagerScreen::_removeDir(const String& path)
 {
-  IStorage::DirEntry entries[BrowseFileView::kCap];
+  auto* entries = new IStorage::DirEntry[BrowseFileView::kCap];
+  if (!entries) return false;
   uint8_t count = Uni.Storage->listDir(path.c_str(), entries, BrowseFileView::kCap);
 
+  // Extract paths into heap arrays sized to actual count, then free entries
+  // immediately — otherwise both the DirEntry block and these arrays would
+  // sit on the stack and stack up across every recursive level.
   String base = (path == "/") ? "" : path;
+  auto* childPaths = new String[count];
+  auto* childIsDir = new bool[count];
+  if (!childPaths || !childIsDir) {
+    delete[] childPaths;
+    delete[] childIsDir;
+    delete[] entries;
+    return false;
+  }
   for (uint8_t i = 0; i < count; i++) {
-    String entryPath = base + "/" + entries[i].name;
-    if (entries[i].isDir) {
-      _removeDir(entryPath);
+    childPaths[i] = base + "/" + entries[i].name;
+    childIsDir[i] = entries[i].isDir;
+  }
+  delete[] entries;
+
+  for (uint8_t i = 0; i < count; i++) {
+    if (childIsDir[i]) {
+      _removeDir(childPaths[i]);
     } else {
-      Uni.Storage->deleteFile(entryPath.c_str());
+      Uni.Storage->deleteFile(childPaths[i].c_str());
     }
   }
+  delete[] childIsDir;
+  delete[] childPaths;
   return Uni.Storage->removeDir(path.c_str());
 }
 
