@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ui/templates/ListScreen.h"
+#include "ui/views/BrowseFileView.h"
 
 class WifiBeaconAttackScreen : public ListScreen
 {
@@ -17,11 +18,19 @@ public:
   void onBack() override;
 
 private:
-  enum State      { STATE_MENU, STATE_SCAN, STATE_SELECT_AP, STATE_ATTACKING };
+  enum State {
+    STATE_MENU,
+    STATE_SCAN,
+    STATE_SELECT_AP,
+    STATE_FILE_PICK,
+    STATE_ATTACKING
+  };
   enum Mode       { MODE_SPAM, MODE_FLOOD };
-  enum SpamTarget { SPAM_DICTIONARY, SPAM_RANDOM };
+  enum SpamTarget { SPAM_BUILTIN, SPAM_FILE };
 
-  static constexpr int MAX_AP = 20;
+  static constexpr int MAX_AP          = 20;
+  static constexpr int MAX_FILE_SSIDS  = 200;
+  static constexpr const char* DICT_DIR = "/unigeek/wifi/beacon_dicts";
 
   struct ApEntry {
     char    ssid[33];
@@ -31,7 +40,7 @@ private:
 
   State      _state      = STATE_MENU;
   Mode       _mode       = MODE_SPAM;
-  SpamTarget _spamTarget = SPAM_DICTIONARY;
+  SpamTarget _spamTarget = SPAM_BUILTIN;
 
   ApEntry  _apList[MAX_AP]          = {};
   char     _apSubLabels[MAX_AP][16] = {};
@@ -45,20 +54,30 @@ private:
   int      _sentThisSec = 0;
   int      _ratePerSec  = 0;
   uint32_t _lastRateTick = 0;
+  uint32_t _lastSendMs   = 0;
   bool     _chromeDrawn  = false;
-  char     _randomSsid[33] = {};
+
+  // ── File-loaded SSIDs (SPAM_FILE) ────────────────────────────────────────
+  char     _fileSsids[MAX_FILE_SSIDS][33] = {};
+  int      _fileSsidCount = 0;
+  String   _fileLabel;                              // basename for sublabel
+
+  // ── File picker (BrowseFileView + virtual "Built In" entry at index 0) ─
+  BrowseFileView _browser;
+  ListItem       _pickerItems[BrowseFileView::kCap + 1] = {};
 
   String   _modeSub;
   String   _targetSub;
   String   _startSub;
-  ListItem _menuItems[3];
+  ListItem _menuItems[3] = { {"Mode"}, {"Target"}, {"Start"} };
   ListItem _apItems[MAX_AP];
 
   void _updateMenuValues();
+  void _showFilePicker();
+  bool _loadDictFile(const String& path);
   void _startScan();
   void _startAttack();
   void _stop();
   void _broadcastNext();
   void _drawAttacking();
-  void _makeRandomSsid();
 };

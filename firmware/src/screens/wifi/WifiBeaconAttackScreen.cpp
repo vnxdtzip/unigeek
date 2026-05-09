@@ -1,8 +1,10 @@
 #include "WifiBeaconAttackScreen.h"
 #include "core/Device.h"
+#include "core/IStorage.h"
 #include "core/ScreenManager.h"
 #include "core/AchievementManager.h"
 #include "screens/wifi/WifiMenuScreen.h"
+#include "ui/actions/ShowStatusAction.h"
 #include "utils/network/WifiAttackUtil.h"
 #include <WiFi.h>
 
@@ -29,10 +31,6 @@ static constexpr const char* kSsids[] = {
 };
 static constexpr int kSsidCount = (int)(sizeof(kSsids) / sizeof(kSsids[0]));
 
-static constexpr const char kCharset[] =
-  "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-";
-static constexpr int kCharsetLen = (int)(sizeof(kCharset) - 1);
-
 // ── Destructor ────────────────────────────────────────────────────────────────
 
 WifiBeaconAttackScreen::~WifiBeaconAttackScreen()
@@ -46,11 +44,11 @@ void WifiBeaconAttackScreen::onInit()
 {
   _state      = STATE_MENU;
   _mode       = MODE_SPAM;
-  _spamTarget = SPAM_DICTIONARY;
+  _spamTarget = SPAM_BUILTIN;
   _floodTarget = -1;
 
   _modeSub   = "Spam";
-  _targetSub = "Dictionary";
+  _targetSub = "Built In";
   _menuItems[0] = {"Mode",   _modeSub.c_str()};
   _menuItems[1] = {"Target", _targetSub.c_str()};
   _menuItems[2] = {"Start",  nullptr};
@@ -65,8 +63,7 @@ void WifiBeaconAttackScreen::onItemSelected(uint8_t index)
       _updateMenuValues();
     } else if (index == 1) {
       if (_mode == MODE_SPAM) {
-        _spamTarget = (_spamTarget == SPAM_DICTIONARY) ? SPAM_RANDOM : SPAM_DICTIONARY;
-        _updateMenuValues();
+        _showFilePicker();          // pick Built In or a .txt file
       } else {
         _startScan();
       }
@@ -81,9 +78,29 @@ void WifiBeaconAttackScreen::onItemSelected(uint8_t index)
       _floodTarget = index;
     }
     _state = STATE_MENU;
-    _updateMenuValues();
-    // reset items pointer back to menu array (selection goes to 0 — OK after AP pick)
     setItems(_menuItems, 3);
+    _updateMenuValues();
+    return;
+  }
+
+  if (_state == STATE_FILE_PICK) {
+    // Index 0 is the virtual "Built In" entry. Index 1..N map to BrowseFileView.
+    if (index == 0) {
+      _spamTarget = SPAM_BUILTIN;
+    } else {
+      uint8_t bIdx = index - 1;
+      if (bIdx < _browser.count()) {
+        const auto& e = _browser.entry(bIdx);
+        if (!e.isDir && _loadDictFile(e.path)) {
+          _fileLabel  = e.name;
+          _spamTarget = SPAM_FILE;
+        }
+      }
+    }
+    _state = STATE_MENU;
+    setItems(_menuItems, 3);
+    _updateMenuValues();
+    return;
   }
 }
 
@@ -98,8 +115,13 @@ void WifiBeaconAttackScreen::onUpdate()
     }
 
     if (_mode == MODE_SPAM) {
-      for (int i = 0; i < 40; i++) _broadcastNext();
+      // Rate-limit to ~125 SSIDs/sec — enough for fast phone scans without
+      // cooking the radio (each call = 3 beacon frames + 3 ms internal delay).
       uint32_t now = millis();
+      if (now - _lastSendMs >= 8) {
+        _lastSendMs = now;
+        _broadcastNext();
+      }
       if (now - _lastRateTick >= 1000) {
         _ratePerSec   = _sentThisSec;
         _sentThisSec  = 0;
@@ -145,9 +167,10 @@ void WifiBeaconAttackScreen::onRender()
 void WifiBeaconAttackScreen::onBack()
 {
   if (_state == STATE_ATTACKING) { _stop(); return; }
-  if (_state == STATE_SELECT_AP) {
+  if (_state == STATE_SELECT_AP || _state == STATE_FILE_PICK) {
     _state = STATE_MENU;
-    setItems(_menuItems, 3); // resets selection to 0 — fine for back nav
+    setItems(_menuItems, 3);
+    _updateMenuValues();
     return;
   }
   Screen.goBack();
@@ -160,7 +183,11 @@ void WifiBeaconAttackScreen::_updateMenuValues()
   _modeSub = (_mode == MODE_SPAM) ? "Spam" : "Flood";
 
   if (_mode == MODE_SPAM) {
-    _targetSub = (_spamTarget == SPAM_DICTIONARY) ? "Dictionary" : "Random";
+    if (_spamTarget == SPAM_FILE) {
+      _targetSub = _fileLabel.isEmpty() ? "(none)" : _fileLabel;
+    } else {
+      _targetSub = "Built In";
+    }
   } else {
     _targetSub = (_floodTarget >= 0 && _floodTarget < _apCount)
                  ? _apList[_floodTarget].ssid
@@ -168,12 +195,16 @@ void WifiBeaconAttackScreen::_updateMenuValues()
   }
 
   const bool needTarget = (_mode == MODE_FLOOD && _floodTarget < 0);
-  _startSub = needTarget ? "select target first" : "";
+  const bool needFile   = (_mode == MODE_SPAM && _spamTarget == SPAM_FILE && _fileSsidCount == 0);
+  _startSub = needTarget ? "select target first"
+            : needFile   ? "pick a file first"
+                         : "";
 
-  // Update sublabels in-place — preserves _selectedIndex, no setItems() reset
+  // Always 3 rows: [Mode, Target, Start]. In-place sublabel update preserves
+  // _selectedIndex so toggling Mode/Target doesn't bounce the highlight.
   _menuItems[0].sublabel = _modeSub.c_str();
   _menuItems[1].sublabel = _targetSub.c_str();
-  _menuItems[2].sublabel = needTarget ? _startSub.c_str() : nullptr;
+  _menuItems[2].sublabel = (needTarget || needFile) ? _startSub.c_str() : nullptr;
   render();
 }
 
@@ -231,9 +262,13 @@ void WifiBeaconAttackScreen::_startAttack()
   _sentThisSec  = 0;
   _ratePerSec   = 0;
   _lastRateTick = millis();
+  _lastSendMs   = 0;
   _chromeDrawn  = false;
 
-  if (_mode == MODE_SPAM && _spamTarget == SPAM_RANDOM) _makeRandomSsid();
+  if (_mode == MODE_SPAM && _spamTarget == SPAM_FILE && _fileSsidCount == 0) {
+    // No file loaded — refuse to start.
+    return;
+  }
 
   _state = STATE_ATTACKING;
   render();
@@ -246,7 +281,8 @@ void WifiBeaconAttackScreen::_stop()
   _rounds      = 0;
   _sentThisSec = 0;
   _ratePerSec  = 0;
-  setItems(_menuItems, 3); // restore menu list after attacking
+  setItems(_menuItems, 3);   // restore menu list after attacking
+  _updateMenuValues();
 }
 
 void WifiBeaconAttackScreen::_broadcastNext()
@@ -254,14 +290,20 @@ void WifiBeaconAttackScreen::_broadcastNext()
   const char* ssid;
   uint8_t     channel;
 
-  if (_spamTarget == SPAM_DICTIONARY) {
-    channel = (uint8_t)((_ssidIdx / (float)kSsidCount * 13) + 1);
+  // Phones predominantly scan the 2.4 GHz non-overlapping triplet 1/6/11;
+  // spreading SSIDs evenly across these maximises visibility regardless of
+  // country code (ch 12-13 are blocked in US locale).
+  static const uint8_t kHotChannels[] = {1, 6, 11};
+
+  if (_spamTarget == SPAM_FILE) {
+    if (_fileSsidCount == 0) return;
+    channel = kHotChannels[_ssidIdx % 3];
+    ssid    = _fileSsids[_ssidIdx++];
+    if (_ssidIdx >= _fileSsidCount) _ssidIdx = 0;
+  } else {
+    channel = kHotChannels[_ssidIdx % 3];
     ssid    = kSsids[_ssidIdx++];
     if (_ssidIdx >= kSsidCount) _ssidIdx = 0;
-  } else {
-    channel = (uint8_t)random(1, 14);
-    _makeRandomSsid();
-    ssid = _randomSsid;
   }
 
   _attacker->beaconSpam(ssid, channel);
@@ -280,8 +322,8 @@ void WifiBeaconAttackScreen::_drawAttacking()
       lcd.setTextDatum(TC_DATUM);
       lcd.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
       char line[40];
-      snprintf(line, sizeof(line), "Spam: %s SSIDs",
-               _spamTarget == SPAM_DICTIONARY ? "Dictionary" : "Random");
+      const char* tgtName = (_spamTarget == SPAM_FILE) ? "File" : "Built In";
+      snprintf(line, sizeof(line), "Spam: %s SSIDs", tgtName);
       lcd.drawString(line, bodyX() + bodyW() / 2, bodyY() + 4);
       lcd.setTextDatum(BC_DATUM);
       lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
@@ -343,10 +385,48 @@ void WifiBeaconAttackScreen::_drawAttacking()
   }
 }
 
-void WifiBeaconAttackScreen::_makeRandomSsid()
+// ── File picker ──────────────────────────────────────────────────────────────
+//
+// Layout: index 0 is a virtual "Built In" row that selects SPAM_BUILTIN.
+// Indexes 1..N come from BrowseFileView for `/unigeek/wifi/beacon_dicts/`
+// filtered to `.txt`. Storage may be unavailable — Built In is still shown
+// so the user always has a way out.
+
+void WifiBeaconAttackScreen::_showFilePicker()
 {
-  int len = random(4, 17);
-  for (int i = 0; i < len; i++)
-    _randomSsid[i] = kCharset[random(0, kCharsetLen)];
-  _randomSsid[len] = '\0';
+  uint8_t n = 0;
+  if (Uni.Storage && Uni.Storage->isAvailable()) {
+    Uni.Storage->makeDir(DICT_DIR);                        // ensure exists
+    n = _browser.load(this, DICT_DIR, ".txt");
+  }
+
+  _pickerItems[0] = { "Built In", "(hardcoded)" };
+  for (uint8_t i = 0; i < n; i++) _pickerItems[i + 1] = _browser.items()[i];
+
+  _state = STATE_FILE_PICK;
+  setItems(_pickerItems, (uint8_t)(n + 1));
+}
+
+bool WifiBeaconAttackScreen::_loadDictFile(const String& path)
+{
+  if (!Uni.Storage || !Uni.Storage->isAvailable()) return false;
+
+  String content = Uni.Storage->readFile(path.c_str());
+  if (content.isEmpty()) return false;
+
+  _fileSsidCount = 0;
+  int start = 0;
+  while (start < (int)content.length() && _fileSsidCount < MAX_FILE_SSIDS) {
+    int end = content.indexOf('\n', start);
+    if (end < 0) end = content.length();
+    String line = content.substring(start, end);
+    line.trim();
+    start = end + 1;
+    if (line.isEmpty() || line.startsWith("#")) continue;
+    if (line.length() > 32) line.remove(32);          // SSID byte limit
+    strncpy(_fileSsids[_fileSsidCount], line.c_str(), 32);
+    _fileSsids[_fileSsidCount][32] = '\0';
+    _fileSsidCount++;
+  }
+  return _fileSsidCount > 0;
 }
