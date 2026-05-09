@@ -51,6 +51,7 @@ Multi-tool firmware for ESP32-based handheld devices. Built with PlatformIO + Ar
   - **CCTV Sniffer** — Discover network cameras, identify brands, test credentials, and stream live video ([details](knowledge/cctv-toolkit.md))
   - **Wigle** — Upload wardrive logs, view user stats, and manage Wigle API token ([details](knowledge/gps-wardriving.md))
   - **Cast Bomb** — Discover DIAL-capable smart TVs and Chromecasts on the LAN and push a YouTube video at them; preset list (Rick Astley, All Star, Trololo, Sandstorm, He's a Pirate) plus custom video ID; cast to one device or all at once ([details](knowledge/cast-bomb.md))
+  - **Bonjour Spam** — Flood the LAN with fake mDNS service announcements; toggleable categories (Spotify Connect, AirPlay, Google Cast, Printer, SMB Workstation) populate phantom targets in nearby devices' service pickers ([details](knowledge/bonjour-spam.md))
 - **Access Point** — Create a custom WiFi hotspot with optional DNS spoofing, captive portal, web file manager, and WiFi QR code for easy sharing ([details](knowledge/access-point.md))
 - **Evil Twin** — Clone a target AP's SSID with a captive portal; optional deauth and real-time password verification ([details](knowledge/evil-twin.md))
 - **Karma Captive** — Detect nearby probe requests and respond with a fake open AP serving a phishing portal to capture credentials ([details](knowledge/karma-captive.md))

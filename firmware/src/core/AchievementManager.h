@@ -119,6 +119,8 @@ public:
       { 201, "wifi_beacon_flood",        "Flood Watcher",          1, 2, "Detect a beacon flood attack" },
       { 246, "wifi_cast_bomb_first",     "Cast Bomb",              1, 0, "Discover cast targets on the local network" },
       { 247, "wifi_cast_bomb_hit",       "Rick Roll",              1, 1, "Successfully cast a video to a smart device" },
+      { 248, "wifi_bonjour_spam_first",  "Phantom Caller",         1, 0, "Start a Bonjour service spam session" },
+      { 249, "wifi_bonjour_spam_1min",   "Network Mirage",         1, 1, "Run Bonjour spam for 1 minute" },
       // ── Bluetooth (domain 2) ──────────────────────────────────────────────
       { 63, "ble_analyzer_scan",         "Bluetooth Scout",        2, 0, "Scan for nearby BLE devices" },
       { 64, "ble_analyzer_detail",       "BLE Inspector",          2, 0, "View details of a BLE device" },
