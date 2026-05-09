@@ -45,16 +45,33 @@ uint8_t CastBombUtil::discover(Device* out, uint8_t maxDevices,
   if (!udp.begin(0)) return 0;
 
   IPAddress mcast(239, 255, 255, 250);
-  if (!udp.beginPacket(mcast, 1900)) { udp.stop(); return 0; }
-  udp.write((const uint8_t*)MSEARCH_REQ, strlen(MSEARCH_REQ));
-  udp.endPacket();
+
+  auto sendMSearch = [&]() {
+    if (!udp.beginPacket(mcast, 1900)) return;
+    udp.write((const uint8_t*)MSEARCH_REQ, strlen(MSEARCH_REQ));
+    udp.endPacket();
+  };
+
+  // Wi-Fi multicast is lossy — APs send at 1 Mbps with no retries — so
+  // re-emit M-SEARCH up to 3 times during the discovery window. Mirrors
+  // what real UPnP clients do.
+  sendMSearch();
+  uint8_t        searchesSent = 1;
+  const uint8_t  maxSearches  = 3;
+  const uint32_t resendEveryMs = 900;
 
   uint8_t  count    = 0;
   uint32_t startMs  = millis();
-  const uint32_t totalMs = 3500;
+  const uint32_t totalMs = 4500;   // slightly longer to absorb retransmits
   uint32_t deadline = startMs + totalMs;
+  uint32_t nextResend = startMs + resendEveryMs;
 
   while (millis() < deadline && count < maxDevices) {
+    if (searchesSent < maxSearches && (int32_t)(millis() - nextResend) >= 0) {
+      sendMSearch();
+      searchesSent++;
+      nextResend = millis() + resendEveryMs;
+    }
     if (progressCb) {
       uint32_t elapsed = millis() - startMs;
       uint8_t pct = (elapsed >= totalMs) ? 100 : (uint8_t)(elapsed * 100 / totalMs);
