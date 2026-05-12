@@ -23,6 +23,10 @@ public:
   static uint8_t discover(Device* out, uint8_t maxDevices,
                           void (*progressCb)(uint8_t) = nullptr);
 
-  // POST `<appUrl>/YouTube` with body `v=<videoId>`. Returns true on 2xx.
-  static bool launchYouTube(const Device& dev, const char* videoId);
+  enum CastResult : uint8_t { CAST_OK, CAST_NO_DIAL, CAST_FAILED };
+
+  // GET-probes <appUrl>/YouTube first; returns CAST_NO_DIAL if the device
+  // doesn't expose the app via DIAL (e.g. Chromecast with Google TV 2020+).
+  // On success POSTs `v=<videoId>` and returns CAST_OK on 2xx.
+  static CastResult launchYouTube(const Device& dev, const char* videoId);
 };

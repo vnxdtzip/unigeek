@@ -141,17 +141,28 @@ uint8_t CastBombUtil::discover(Device* out, uint8_t maxDevices,
   return count;
 }
 
-bool CastBombUtil::launchYouTube(const Device& dev, const char* videoId)
+CastBombUtil::CastResult CastBombUtil::launchYouTube(const Device& dev, const char* videoId)
 {
-  if (!dev.appUrl[0] || !videoId || !*videoId) return false;
+  if (!dev.appUrl[0] || !videoId || !*videoId) return CAST_FAILED;
 
   String url = dev.appUrl;
   if (!url.endsWith("/")) url += "/";
   url += "YouTube";
 
+  // Probe: GET the app entry first — some devices (e.g. Chromecast with
+  // Google TV 2020+) no longer expose the YouTube DIAL endpoint at all.
+  {
+    HTTPClient probe;
+    probe.setTimeout(2000);
+    if (!probe.begin(url)) return CAST_FAILED;
+    int gc = probe.GET();
+    probe.end();
+    if (gc == 404) return CAST_NO_DIAL;
+  }
+
   HTTPClient http;
   http.setTimeout(3000);
-  if (!http.begin(url)) return false;
+  if (!http.begin(url)) return CAST_FAILED;
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
   String body = "v=";
@@ -159,5 +170,5 @@ bool CastBombUtil::launchYouTube(const Device& dev, const char* videoId)
 
   int code = http.POST(body);
   http.end();
-  return code >= 200 && code < 300;
+  return (code >= 200 && code < 300) ? CAST_OK : CAST_FAILED;
 }

@@ -23,7 +23,8 @@ Discovers DIAL-capable cast targets on the local network and pushes a YouTube vi
 ## Notes
 
 - DIAL has no authentication by design; any device on the LAN can launch apps. The "exploit" is the protocol working as intended.
-- Modern Chromecasts dropped generic DIAL in 2014 but still maintain the YouTube DIAL endpoint specifically.
+- **Chromecast with Google TV (2020+)** responds to SSDP discovery but no longer exposes a YouTube DIAL endpoint — `GET /apps/YouTube` returns 404. These devices show up in the list but report "No DIAL support" on cast attempt. Older Chromecasts (1st–3rd gen), Roku, and most smart TVs still work.
+- The firmware probes the app URL with a GET before attempting the POST; this surfaces the "No DIAL support" error without wasting a POST round-trip.
 - Some smart TVs require **Network Standby** / **Wake on LAN over WiFi** to be enabled in TV settings to be discoverable while idle.
 - The screen captures a maximum of 16 devices per discovery.
 - Video ID is the 11-character string after `v=` in a YouTube URL (e.g. `dQw4w9WgXcQ`).

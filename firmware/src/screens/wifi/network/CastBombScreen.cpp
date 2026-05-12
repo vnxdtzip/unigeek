@@ -131,14 +131,22 @@ void CastBombScreen::_cast(uint8_t index) {
 
   bool anyHit = false;
 
+  auto castMsg = [](CastBombUtil::CastResult r) -> const char* {
+    switch (r) {
+      case CastBombUtil::CAST_OK:      return "Cast launched";
+      case CastBombUtil::CAST_NO_DIAL: return "No DIAL support";
+      default:                         return "Cast failed";
+    }
+  };
+
   if (index < _devCount) {
     String msg = "Casting to ";
     msg += _devices[index].name;
     msg += "...";
     ShowStatusAction::show(msg.c_str(), 0);
-    bool ok = CastBombUtil::launchYouTube(_devices[index], vid);
-    ShowStatusAction::show(ok ? "Cast launched" : "Cast failed", 1200);
-    anyHit = ok;
+    auto r = CastBombUtil::launchYouTube(_devices[index], vid);
+    ShowStatusAction::show(castMsg(r), 1200);
+    anyHit = (r == CastBombUtil::CAST_OK);
   } else {
     uint8_t hits = 0;
     for (uint8_t i = 0; i < _devCount; i++) {
@@ -148,7 +156,7 @@ void CastBombScreen::_cast(uint8_t index) {
       msg += String(_devCount);
       msg += ")...";
       ShowStatusAction::show(msg.c_str(), 0);
-      if (CastBombUtil::launchYouTube(_devices[i], vid)) hits++;
+      if (CastBombUtil::launchYouTube(_devices[i], vid) == CastBombUtil::CAST_OK) hits++;
     }
     String done = "Cast ";
     done += String(hits);
