@@ -85,6 +85,30 @@
   #define PIN_CONFIG_NRF24_CSN_DEFAULT "-1"
 #endif
 
+// ─── RF module selection ─────────────────────────────────────────────────────
+// Values: "0" = M5 RF433T/R (single-pin OOK), "1" = CC1101 SPI (default)
+#define PIN_CONFIG_RF_MODULE        "rf_module"
+#ifdef CC1101_CS_PIN
+  #define PIN_CONFIG_RF_MODULE_DEFAULT "1"
+#else
+  #define PIN_CONFIG_RF_MODULE_DEFAULT "0"
+#endif
+
+#define PIN_CONFIG_RF_TX            "rf_tx"
+#define PIN_CONFIG_RF_RX            "rf_rx"
+
+#ifdef GROVE_SDA
+  #define PIN_CONFIG_RF_TX_DEFAULT  String(GROVE_SDA)
+#else
+  #define PIN_CONFIG_RF_TX_DEFAULT  "-1"
+#endif
+
+#ifdef GROVE_SCL
+  #define PIN_CONFIG_RF_RX_DEFAULT  String(GROVE_SCL)
+#else
+  #define PIN_CONFIG_RF_RX_DEFAULT  "-1"
+#endif
+
 // ─── GPS pin config ─────────────────────────────────────────────────────────
 #define PIN_CONFIG_GPS_TX           "gps_tx"
 #define PIN_CONFIG_GPS_RX           "gps_rx"

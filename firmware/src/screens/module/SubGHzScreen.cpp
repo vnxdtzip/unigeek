@@ -11,23 +11,38 @@
 #include "ui/views/ProgressView.h"
 
 void SubGHzScreen::onInit() {
-  _csPin   = PinConfig.get(PIN_CONFIG_CC1101_CS,   PIN_CONFIG_CC1101_CS_DEFAULT).toInt();
-  _gdo0Pin = PinConfig.get(PIN_CONFIG_CC1101_GDO0, PIN_CONFIG_CC1101_GDO0_DEFAULT).toInt();
+  _rfModule = PinConfig.getInt(PIN_CONFIG_RF_MODULE, PIN_CONFIG_RF_MODULE_DEFAULT);
 
-  if (_csPin < 0 || _gdo0Pin < 0) {
-    ShowStatusAction::show("Set CC1101 pins first");
-    Screen.goBack();
-    return;
-  }
+  if (_rfModule == RF_MODULE_CC1101) {
+    _csPin   = PinConfig.get(PIN_CONFIG_CC1101_CS,   PIN_CONFIG_CC1101_CS_DEFAULT).toInt();
+    _gdo0Pin = PinConfig.get(PIN_CONFIG_CC1101_GDO0, PIN_CONFIG_CC1101_GDO0_DEFAULT).toInt();
 
-  ProgressView::init();
-  ProgressView::progress("Detecting CC1101...", 30);
-  if (!_rf.begin(Uni.Spi, _csPin, _gdo0Pin)) {
-    ShowStatusAction::show("CC1101 not found!");
-    Screen.goBack();
-    return;
+    if (_csPin < 0 || _gdo0Pin < 0) {
+      ShowStatusAction::show("Set CC1101 pins first");
+      Screen.goBack();
+      return;
+    }
+
+    ProgressView::init();
+    ProgressView::progress("Detecting CC1101...", 30);
+    if (!_rf.begin(Uni.Spi, _csPin, _gdo0Pin)) {
+      ShowStatusAction::show("CC1101 not found!");
+      Screen.goBack();
+      return;
+    }
+    _rf.end();
+  } else {
+    // M5 RF433T/R — no SPI chip, just single GPIO pins
+    _rfTxPin = PinConfig.getInt(PIN_CONFIG_RF_TX, PIN_CONFIG_RF_TX_DEFAULT);
+    _rfRxPin = PinConfig.getInt(PIN_CONFIG_RF_RX, PIN_CONFIG_RF_RX_DEFAULT);
+    if (_rfTxPin < 0 && _rfRxPin < 0) {
+      ShowStatusAction::show("Set RF TX/RX pins first");
+      Screen.goBack();
+      return;
+    }
+    // Default to 433.92 MHz label for M5 RF modules
+    _rf.setFrequency(433.92f);
   }
-  _rf.end();
 
   _showMenu();
 }
@@ -56,7 +71,25 @@ void SubGHzScreen::onUpdate() {
   if (_state == STATE_RECEIVING) {
     if (_capturedCount < kMaxCapture) {
       CC1101Util::Signal sig;
-      if (_rf.pollReceive(sig) && !_isDuplicate(sig)) {
+      bool gotSignal = false;
+
+      if (_rfModule == RF_MODULE_CC1101) {
+        gotSignal = _rf.pollReceive(sig);
+      } else {
+        // M5 RF433T/R — decode via RCSwitch interrupt
+        if (_sw.available()) {
+          sig.frequency = _rf.getFrequency();
+          sig.protocol  = "RcSwitch";
+          sig.preset    = String(_sw.getReceivedProtocol());
+          sig.key       = _sw.getReceivedValue();
+          sig.bit       = _sw.getReceivedBitlength();
+          sig.te        = _sw.getReceivedDelay();
+          _sw.resetAvailable();
+          gotSignal     = (sig.key != 0);
+        }
+      }
+
+      if (gotSignal && !_isDuplicate(sig)) {
         _capturedSignals[_capturedCount] = sig;
         _capturedTimes[_capturedCount]   = _generateTimestampName();
         _capturedSaved[_capturedCount]   = false;
@@ -67,7 +100,8 @@ void SubGHzScreen::onUpdate() {
           if (n == 1) Achievement.unlock("rf_receive_first");
         }
         if (_capturedCount >= kMaxCapture) {
-          _rf.endReceive();
+          if (_rfModule == RF_MODULE_CC1101) _rf.endReceive();
+          else                               _sw.disableReceive();
           snprintf(_titleBuf, sizeof(_titleBuf), "Sub-GHz Full");
         }
         _showReceiveList();
@@ -84,18 +118,24 @@ void SubGHzScreen::onUpdate() {
     if (Uni.Nav->wasPressed()) {
       auto dir = Uni.Nav->readDirection();
       if (dir == INavigation::DIR_BACK || dir == INavigation::DIR_PRESS) {
-        digitalWrite(_gdo0Pin, LOW);
-        _rf.end();
+        if (_rfModule == RF_MODULE_CC1101) {
+          digitalWrite(_gdo0Pin, LOW);
+          _rf.end();
+        } else {
+          digitalWrite(_rfTxPin, LOW);
+        }
         _showMenu();
         return;
       }
     }
 
+    // Drive the TX line (GDO0 for CC1101, rfTxPin for M5 RF)
+    int8_t jamPin = (_rfModule == RF_MODULE_CC1101) ? _gdo0Pin : _rfTxPin;
     for (int i = 0; i < 50; i++) {
       uint32_t pw  = 5 + (micros() % 46);
       uint32_t gap = 5 + (micros() % 96);
-      digitalWrite(_gdo0Pin, HIGH); delayMicroseconds(pw);
-      digitalWrite(_gdo0Pin, LOW);  delayMicroseconds(gap);
+      digitalWrite(jamPin, HIGH); delayMicroseconds(pw);
+      digitalWrite(jamPin, LOW);  delayMicroseconds(gap);
     }
     yield();
 
@@ -289,15 +329,20 @@ void SubGHzScreen::onBack() {
     _rf.end();
     Screen.goBack();
   } else if (_state == STATE_RECEIVING) {
-    _rf.end();
+    if (_rfModule == RF_MODULE_CC1101) _rf.end();
+    else                               _sw.disableReceive();
     _showMenu();
   } else if (_state == STATE_SCANNING) {
     _rf.endScan();
     _rf.end();
     _showMenu();
   } else if (_state == STATE_JAMMING) {
-    digitalWrite(_gdo0Pin, LOW);
-    _rf.end();
+    if (_rfModule == RF_MODULE_CC1101) {
+      digitalWrite(_gdo0Pin, LOW);
+      _rf.end();
+    } else {
+      digitalWrite(_rfTxPin, LOW);
+    }
     _showMenu();
   } else if (_state == STATE_SEND_BROWSE) {
     if (_browsePath == kRootPath) {
@@ -312,38 +357,57 @@ void SubGHzScreen::onBack() {
 
 void SubGHzScreen::onItemSelected(uint8_t index) {
   if (_state == STATE_MENU) {
-    switch (index) {
+    // Map M5 RF menu indices: 0=Freq, 1=Receive, 2=Send, 3=Jammer (no Detect Freq)
+    // Map CC1101 menu indices: 0=Freq, 1=DetectFreq, 2=Receive, 3=Send, 4=Jammer
+    uint8_t action = index;
+    if (_rfModule == RF_MODULE_M5RF && index >= 1) action = index + 1; // skip DetectFreq slot
+
+    switch (action) {
       case 0: { // Frequency
         _selectFrequency();
         return;
       }
-      case 1: { // Detect Freq
+      case 1: { // Detect Freq (CC1101 only)
         _startScan();
         return;
       }
       case 2: { // Receive
-        if (_csPin < 0 || _gdo0Pin < 0) {
-          ShowStatusAction::show("Set CS and GDO0 pins first");
-          render();
-          return;
-        }
-        if (!_rf.begin(Uni.Spi, _csPin, _gdo0Pin)) {
-          ShowStatusAction::show("CC1101 not found");
-          render();
-          return;
+        if (_rfModule == RF_MODULE_CC1101) {
+          if (_csPin < 0 || _gdo0Pin < 0) {
+            ShowStatusAction::show("Set CS and GDO0 pins first");
+            render();
+            return;
+          }
+          if (!_rf.begin(Uni.Spi, _csPin, _gdo0Pin)) {
+            ShowStatusAction::show("CC1101 not found");
+            render();
+            return;
+          }
+          _rf.beginReceive();
+        } else {
+          if (_rfRxPin < 0) {
+            ShowStatusAction::show("Set RF RX pin first");
+            render();
+            return;
+          }
+          _sw.enableReceive(_rfRxPin);
         }
         _capturedCount = 0;
         _lastRender = 0;
         _state = STATE_RECEIVING;
         _chromeDrawn = false;
         snprintf(_titleBuf, sizeof(_titleBuf), "Sub-GHz RX (0/%d)", kMaxCapture);
-        _rf.beginReceive();
         setItems(_capturedItems, 0);  // prime pointer once; _showReceiveList uses setCount after this
         break;
       }
       case 3: { // Send
-        if (_csPin < 0) {
+        if (_rfModule == RF_MODULE_CC1101 && _csPin < 0) {
           ShowStatusAction::show("Set CS pin first");
+          render();
+          return;
+        }
+        if (_rfModule == RF_MODULE_M5RF && _rfTxPin < 0) {
+          ShowStatusAction::show("Set RF TX pin first");
           render();
           return;
         }
@@ -351,17 +415,27 @@ void SubGHzScreen::onItemSelected(uint8_t index) {
         break;
       }
       case 4: { // Jammer
-        if (_csPin < 0 || _gdo0Pin < 0) {
-          ShowStatusAction::show("Set CS and GDO0 pins first");
-          render();
-          return;
+        if (_rfModule == RF_MODULE_CC1101) {
+          if (_csPin < 0 || _gdo0Pin < 0) {
+            ShowStatusAction::show("Set CS and GDO0 pins first");
+            render();
+            return;
+          }
+          if (!_rf.begin(Uni.Spi, _csPin, _gdo0Pin)) {
+            ShowStatusAction::show("CC1101 not found");
+            render();
+            return;
+          }
+          _rf.startTx();
+        } else {
+          if (_rfTxPin < 0) {
+            ShowStatusAction::show("Set RF TX pin first");
+            render();
+            return;
+          }
+          pinMode(_rfTxPin, OUTPUT);
+          digitalWrite(_rfTxPin, LOW);
         }
-        if (!_rf.begin(Uni.Spi, _csPin, _gdo0Pin)) {
-          ShowStatusAction::show("CC1101 not found");
-          render();
-          return;
-        }
-        _rf.startTx();
         _state = STATE_JAMMING;
         _chromeDrawn = false;
         _jamStart = millis();
@@ -383,7 +457,10 @@ void SubGHzScreen::onItemSelected(uint8_t index) {
     if (index < _capturedCount) {
       _handleCaptureSelection(index);
       // If a deletion freed a slot and receive was stopped, restart it
-      if (_capturedCount < kMaxCapture) _rf.beginReceive();
+      if (_capturedCount < kMaxCapture) {
+        if (_rfModule == RF_MODULE_CC1101) _rf.beginReceive();
+        else                               _sw.enableReceive(_rfRxPin);
+      }
     }
     return;
   }
@@ -415,15 +492,22 @@ void SubGHzScreen::_sendBrowseFile(uint8_t index) {
     render();
     return;
   }
-  if (!_rf.begin(Uni.Spi, _csPin, _gdo0Pin)) {
-    ShowStatusAction::show("CC1101 not found");
-    render();
-    return;
-  }
+
   ProgressView::init();
   ProgressView::progress(("Sending " + e.name).c_str(), 50);
-  _rf.sendSignal(sig);
-  _rf.end();
+
+  if (_rfModule == RF_MODULE_CC1101) {
+    if (!_rf.begin(Uni.Spi, _csPin, _gdo0Pin)) {
+      ShowStatusAction::show("CC1101 not found");
+      render();
+      return;
+    }
+    _rf.sendSignal(sig);
+    _rf.end();
+  } else {
+    _sendSignalM5RF(sig);
+  }
+
   {
     int n = Achievement.inc("rf_send_first");
     if (n == 1) Achievement.unlock("rf_send_first");
@@ -478,7 +562,12 @@ void SubGHzScreen::_showMenu() {
   _chromeDrawn = false;
   strcpy(_titleBuf, "Sub-GHz");
   _updateSublabels();
-  setItems(_menuItems, kMenuCount);
+  if (_rfModule == RF_MODULE_M5RF) {
+    _m5rfMenuItems[0].sublabel = _freqSub.c_str();
+    setItems(_m5rfMenuItems, kM5RFMenuCount);
+  } else {
+    setItems(_menuItems, kMenuCount);
+  }
 }
 
 void SubGHzScreen::_updateSublabels() {
@@ -613,20 +702,25 @@ void SubGHzScreen::_rebuildCapturedItems() {
 
 void SubGHzScreen::_sendCapturedSignal(uint8_t index) {
   if (index >= _capturedCount) return;
-  if (_csPin < 0) {
-    ShowStatusAction::show("Set CS pin first");
-    render();
-    return;
-  }
-  // Replay flow: stop receive → init/send/end transfer → start receive.
-  // Chip is already initialised by STATE_RECEIVING. We must detach the RX
-  // ISR before TX or every pulse on GDO0 we drive for transmission would
-  // re-fire the receive interrupt (corrupts RX buffer + adds pulse jitter).
-  // The caller (onItemSelected STATE_RECEIVING) re-arms RX via beginReceive().
-  _rf.endReceive();
+
   ProgressView::init();
   ProgressView::progress(("Replaying " + _capturedTimes[index]).c_str(), 50);
-  _rf.sendSignal(_capturedSignals[index]);
+
+  if (_rfModule == RF_MODULE_CC1101) {
+    if (_csPin < 0) {
+      ShowStatusAction::show("Set CS pin first");
+      render();
+      return;
+    }
+    // Stop RX ISR before TX to avoid corrupting the receive buffer
+    _rf.endReceive();
+    _rf.sendSignal(_capturedSignals[index]);
+  } else {
+    // Stop RX interrupt before TX to avoid ISR conflict on the same bus
+    _sw.disableReceive();
+    _sendSignalM5RF(_capturedSignals[index]);
+  }
+
   {
     int n = Achievement.inc("rf_send_first");
     if (n == 1) Achievement.unlock("rf_send_first");
@@ -692,6 +786,24 @@ String SubGHzScreen::_makeUniquePath(const String& name) {
     if (!Uni.Storage->exists(candidate.c_str())) return candidate;
   }
   return base;
+}
+
+// ── M5 RF433T/R send ──────────────────────────────────────────────────────
+
+void SubGHzScreen::_sendSignalM5RF(const CC1101Util::Signal& sig) {
+  if (_rfTxPin < 0) {
+    ShowStatusAction::show("Set RF TX pin first");
+    return;
+  }
+  if (sig.protocol != "RcSwitch") {
+    ShowStatusAction::show("RAW not supported on M5 RF");
+    return;
+  }
+  _sw.enableTransmit(_rfTxPin);
+  int proto = sig.preset.toInt();
+  if (proto > 0) _sw.setProtocol(proto, sig.te > 0 ? sig.te : 350);
+  _sw.send(sig.key, sig.bit > 0 ? sig.bit : 24);
+  _sw.disableTransmit();
 }
 
 void SubGHzScreen::_loadBrowseDir(const String& path) {

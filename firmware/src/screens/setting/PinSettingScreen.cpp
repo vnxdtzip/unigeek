@@ -5,6 +5,7 @@
 #include "core/AchievementManager.h"
 #include "screens/setting/SettingScreen.h"
 #include "ui/actions/InputNumberAction.h"
+#include "ui/actions/InputSelectAction.h"
 
 
 void PinSettingScreen::onInit() {
@@ -33,6 +34,19 @@ void PinSettingScreen::onInit() {
     _map[_itemCount] = PIN_EXT_SCL;
     _itemCount++;
   }
+
+  // RF module selection
+  _items[_itemCount] = {"RF Module", ""};
+  _map[_itemCount] = PIN_RF_MODULE;
+  _itemCount++;
+
+  _items[_itemCount] = {"RF TX Pin", ""};
+  _map[_itemCount] = PIN_RF_TX;
+  _itemCount++;
+
+  _items[_itemCount] = {"RF RX Pin", ""};
+  _map[_itemCount] = PIN_RF_RX;
+  _itemCount++;
 
   // CC1101
   _items[_itemCount] = {"CC1101 CS Pin", ""};
@@ -80,6 +94,12 @@ void PinSettingScreen::_refresh() {
   _gpsBaudSub = PinConfig.get(PIN_CONFIG_GPS_BAUD, PIN_CONFIG_GPS_BAUD_DEFAULT);
   _sdaSub = PinConfig.get(PIN_CONFIG_EXT_SDA, PIN_CONFIG_EXT_SDA_DEFAULT);
   _sclSub = PinConfig.get(PIN_CONFIG_EXT_SCL, PIN_CONFIG_EXT_SCL_DEFAULT);
+  {
+    int mod = PinConfig.getInt(PIN_CONFIG_RF_MODULE, PIN_CONFIG_RF_MODULE_DEFAULT);
+    _rfModuleSub = (mod == 0) ? "M5 RF433T/R" : "CC1101 SPI";
+  }
+  _rfTxSub  = PinConfig.get(PIN_CONFIG_RF_TX, PIN_CONFIG_RF_TX_DEFAULT);
+  _rfRxSub  = PinConfig.get(PIN_CONFIG_RF_RX, PIN_CONFIG_RF_RX_DEFAULT);
   _cc1101CsSub = PinConfig.get(PIN_CONFIG_CC1101_CS, PIN_CONFIG_CC1101_CS_DEFAULT);
   _cc1101Gdo0Sub = PinConfig.get(PIN_CONFIG_CC1101_GDO0, PIN_CONFIG_CC1101_GDO0_DEFAULT);
   _nrf24CeSub = PinConfig.get(PIN_CONFIG_NRF24_CE, PIN_CONFIG_NRF24_CE_DEFAULT);
@@ -96,6 +116,9 @@ void PinSettingScreen::_refresh() {
       case PIN_GPS_BAUD:    _items[i].sublabel = _gpsBaudSub.c_str(); break;
       case PIN_EXT_SDA:     _items[i].sublabel = _sdaSub.c_str(); break;
       case PIN_EXT_SCL:     _items[i].sublabel = _sclSub.c_str(); break;
+      case PIN_RF_MODULE:   _items[i].sublabel = _rfModuleSub.c_str(); break;
+      case PIN_RF_TX:       _items[i].sublabel = _rfTxSub.c_str(); break;
+      case PIN_RF_RX:       _items[i].sublabel = _rfRxSub.c_str(); break;
       case PIN_CC1101_CS:   _items[i].sublabel = _cc1101CsSub.c_str(); break;
       case PIN_CC1101_GDO0: _items[i].sublabel = _cc1101Gdo0Sub.c_str(); break;
       case PIN_NRF24_CE:    _items[i].sublabel = _nrf24CeSub.c_str(); break;
@@ -155,6 +178,39 @@ void PinSettingScreen::onItemSelected(uint8_t index) {
       int val = InputNumberAction::popup("External SCL Pin", 0, 48, cur);
       if (!InputNumberAction::wasCancelled()) {
         PinConfig.set(PIN_CONFIG_EXT_SCL, String(val));
+        PinConfig.save(Uni.Storage);
+      }
+      break;
+    }
+    case PIN_RF_MODULE: {
+      static constexpr InputSelectAction::Option rfModOpts[] = {
+        {"M5 RF433T/R", "0"},
+        {"CC1101 SPI",  "1"},
+      };
+      int cur = PinConfig.getInt(PIN_CONFIG_RF_MODULE, PIN_CONFIG_RF_MODULE_DEFAULT);
+      char curBuf[4];
+      snprintf(curBuf, sizeof(curBuf), "%d", cur);
+      const char* choice = InputSelectAction::popup("RF Module", rfModOpts, 2, curBuf);
+      if (choice) {
+        PinConfig.set(PIN_CONFIG_RF_MODULE, String(choice));
+        PinConfig.save(Uni.Storage);
+      }
+      break;
+    }
+    case PIN_RF_TX: {
+      int cur = PinConfig.getInt(PIN_CONFIG_RF_TX, PIN_CONFIG_RF_TX_DEFAULT);
+      int val = InputNumberAction::popup("RF TX Pin", -1, 48, cur);
+      if (!InputNumberAction::wasCancelled()) {
+        PinConfig.set(PIN_CONFIG_RF_TX, String(val));
+        PinConfig.save(Uni.Storage);
+      }
+      break;
+    }
+    case PIN_RF_RX: {
+      int cur = PinConfig.getInt(PIN_CONFIG_RF_RX, PIN_CONFIG_RF_RX_DEFAULT);
+      int val = InputNumberAction::popup("RF RX Pin", -1, 48, cur);
+      if (!InputNumberAction::wasCancelled()) {
+        PinConfig.set(PIN_CONFIG_RF_RX, String(val));
         PinConfig.save(Uni.Storage);
       }
       break;

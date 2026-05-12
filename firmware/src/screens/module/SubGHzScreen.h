@@ -7,8 +7,11 @@
 #include "ui/templates/ListScreen.h"
 #include "ui/views/BrowseFileView.h"
 #include "utils/rf/CC1101Util.h"
+#include "utils/rf/RCSwitchUtil.h"
 
 class SubGHzScreen : public ListScreen {
+  static constexpr int RF_MODULE_M5RF   = 0;
+  static constexpr int RF_MODULE_CC1101 = 1;
 public:
   const char* title() override { return _titleBuf; }
   bool inhibitPowerSave() override { return _state == STATE_RECEIVING || _state == STATE_SCANNING; }
@@ -29,17 +32,36 @@ private:
     STATE_SCANNING,
   } _state = STATE_MENU;
 
+  // RF module
+  int _rfModule  = RF_MODULE_CC1101;
+
+  // CC1101 SPI mode
   CC1101Util _rf;
   int8_t _csPin   = -1;
   int8_t _gdo0Pin = -1;
+
+  // M5 RF433T/R OOK mode
+  RCSwitchUtil _sw;
+  int8_t _rfTxPin = -1;
+  int8_t _rfRxPin = -1;
+
   char _titleBuf[32] = "Sub-GHz";
   bool _chromeDrawn = false;  // partial-redraw: static body painted once per state
 
-  // Menu (5 items)
+  // CC1101 menu (5 items)
   static constexpr uint8_t kMenuCount = 5;
   ListItem _menuItems[kMenuCount] = {
     {"Frequency"},
     {"Detect Freq"},
+    {"Receive"},
+    {"Send"},
+    {"Jammer"},
+  };
+
+  // M5 RF433T/R menu (4 items — no Detect Freq)
+  static constexpr uint8_t kM5RFMenuCount = 4;
+  ListItem _m5rfMenuItems[kM5RFMenuCount] = {
+    {"Frequency"},
     {"Receive"},
     {"Send"},
     {"Jammer"},
@@ -83,5 +105,6 @@ private:
   void _sendBrowseFile(uint8_t index);
   void _showBrowseOptions(uint8_t index);
   String _makeUniquePath(const String& name);
+  void _sendSignalM5RF(const CC1101Util::Signal& sig);
 };
 
