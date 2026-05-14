@@ -16,6 +16,7 @@
 #include "ui/actions/InputTextAction.h"
 #include "ui/actions/InputSelectAction.h"
 #include "utils/network/WifiUtility.h"
+#include "utils/gps/MapPickerUtil.h"
 #include <sys/time.h>
 #ifdef DEVICE_HAS_RTC
 #include "core/RtcManager.h"
@@ -134,6 +135,20 @@ void GPSScreen::onUpdate() {
     return;
   }
 
+  if (_state == STATE_MAP) {
+    if (Uni.Nav->wasPressed()) {
+      auto dir = Uni.Nav->readDirection();
+      if (dir == INavigation::DIR_BACK) {
+        _map.reset();
+        _showMapPickMenu();
+        render();
+        return;
+      }
+      if (_map.onNav(dir) == WardriveMapView::NAV_HANDLED) render();
+    }
+    return;
+  }
+
   // STATE_MENU — default list behavior
   ListScreen::onUpdate();
 }
@@ -187,6 +202,10 @@ void GPSScreen::onRender() {
     _statsView.render(bodyX(), bodyY(), bodyW(), bodyH());
     return;
   }
+  if (_state == STATE_MAP) {
+    _map.render(bodyX(), bodyY(), bodyW(), bodyH());
+    return;
+  }
   ListScreen::onRender();
 }
 
@@ -198,6 +217,10 @@ void GPSScreen::onBack() {
     _gps.end();
     _disableGnssPower();
     Screen.goBack();
+  } else if (_state == STATE_MAP) {
+    _map.reset();
+    _showMapPickMenu();
+    render();
   } else {
     _showMenu();
   }
@@ -251,10 +274,16 @@ void GPSScreen::onItemSelected(uint8_t index) {
         _showUploadMenu();
         render();
         break;
+      case 8:
+        _showMapPickMenu();
+        render();
+        break;
     }
   } else if (_state == STATE_UPLOAD) {
     _uploadFile(index);
     render();
+  } else if (_state == STATE_MAP_PICK) {
+    _openMap(index);
   }
 }
 
@@ -504,6 +533,35 @@ void GPSScreen::_uploadFile(uint8_t fileIndex) {
   if (n == 50)  Achievement.unlock("gps_wigle_50");
   if (n == 100) Achievement.unlock("gps_wigle_100");
   _showUploadMenu();
+}
+
+void GPSScreen::_showMapPickMenu() {
+  if (!MapPickerUtil::ensureWifi()) return;
+
+  _state = STATE_MAP_PICK;
+  _fileCount = WigleUtil::listFiles(Uni.Storage, _fileNames, _fileLabels,
+                                     _fileUploaded, WigleUtil::MAX_FILES);
+
+  if (_fileCount == 0) {
+    ShowStatusAction::show("No wardrive files found");
+    _showMenu();
+    return;
+  }
+
+  for (uint8_t i = 0; i < _fileCount; i++) {
+    _uploadItems[i] = {_fileLabels[i].c_str(), nullptr};
+  }
+  setItems(_uploadItems, _fileCount);
+}
+
+void GPSScreen::_openMap(uint8_t fileIndex) {
+  if (fileIndex >= _fileCount) return;
+  if (!_map.init(Uni.Storage, _fileNames[fileIndex])) {
+    ShowStatusAction::show("No GPS fixes in file");
+    return;
+  }
+  _state = STATE_MAP;
+  render();
 }
 
 void GPSScreen::_enableGnssPower() {

@@ -9,6 +9,7 @@
 #include "ui/views/LogView.h"
 #include "utils/gps/GPSModule.h"
 #include "utils/gps/WigleUtil.h"
+#include "utils/gps/WardriveMapView.h"
 
 class GPSScreen : public ListScreen
 {
@@ -30,7 +31,11 @@ private:
     STATE_WARDRIVING,
     STATE_STATS,
     STATE_UPLOAD,
+    STATE_MAP_PICK,
+    STATE_MAP,
   } _state = STATE_LOADING;
+
+  WardriveMapView _map;
 
   GPSModule _gps;
   unsigned long _lastRender = 0;
@@ -43,7 +48,7 @@ private:
   int8_t _rxPin = -1;
   uint32_t _baudRate = 9600;
 
-  ListItem _menuItems[8] = {
+  ListItem _menuItems[9] = {
     {"View GPS Info"},
     {"Scan Mode"},
     {"Wardrive Mode"},
@@ -52,6 +57,7 @@ private:
     {"Wigle Token"},
     {"Wardrive Stat"},
     {"Upload Wardrive"},
+    {"Map View"},
   };
 
   ScrollListView _infoView;
@@ -83,6 +89,8 @@ private:
   void _showWigleStats();
   void _showUploadMenu();
   void _uploadFile(uint8_t fileIndex);
+  void _showMapPickMenu();
+  void _openMap(uint8_t fileIndex);
   void _renderInfo();
   void _renderWardriver();
   static void _wardStatusCb(Sprite& sp, int barY, int width, void* userData);

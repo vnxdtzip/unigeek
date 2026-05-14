@@ -3,6 +3,7 @@
 #include "ui/templates/ListScreen.h"
 #include "ui/views/ScrollListView.h"
 #include "utils/gps/WigleUtil.h"
+#include "utils/gps/WardriveMapView.h"
 
 class WigleScreen : public ListScreen
 {
@@ -20,14 +21,19 @@ private:
     STATE_MENU,
     STATE_STATS,
     STATE_UPLOAD,
+    STATE_MAP_PICK,
+    STATE_MAP,
   } _state = STATE_MENU;
+
+  WardriveMapView _map;
 
   String _tokenSub;
 
-  ListItem _menuItems[3] = {
+  ListItem _menuItems[4] = {
     {"Wigle Token"},
     {"Wardrive Stat"},
     {"Upload Wardrive"},
+    {"Map View"},
   };
 
   // Stats
@@ -46,5 +52,7 @@ private:
   void _showStats();
   void _showUploadMenu();
   void _uploadFile(uint8_t index);
+  void _showMapPickMenu();
+  void _openMap(uint8_t index);
 };
 
