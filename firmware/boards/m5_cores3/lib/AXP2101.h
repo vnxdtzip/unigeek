@@ -25,24 +25,22 @@ public:
     _write(0x69, 0x11);
 
     // ── Set LDO voltages BEFORE enabling ─────────────────────
-    // ALDO1 = 1.8V  (digital core)
-    _write(0x92, 13);
-    // ALDO2 = 3.3V
-    _write(0x93, 28);
-    // ALDO3 = 3.3V  (AW88298 speaker amp)
-    _write(0x94, 28);
-    // ALDO4 = 3.3V  (FT6336U touch power)
-    _write(0x95, 28);
-    // BLDO1 = 3.3V  (LCD digital VDD / camera)
-    _write(0x96, 28);
-    // BLDO2 = 1.4V  (camera analog / misc)
-    _write(0x97, 9);
-    // DLDO1 = 3.3V  (SY7088 boost input → LCD backlight LEDs)
-    _write(0x99, 28);
+    // Only rails actually used by the firmware are configured.
+    // BLDO2 (1.4V camera DVDD) is skipped — no onboard camera support.
+    _write(0x92, 13);   // ALDO1 = 1.8V  (digital core)
+    _write(0x93, 28);   // ALDO2 = 3.3V  (system 3.3V rail)
+    _write(0x94, 28);   // ALDO3 = 3.3V  (AW88298 speaker amp)
+    _write(0x95, 28);   // ALDO4 = 3.3V  (FT6336U touch power)
+    _write(0x96, 28);   // BLDO1 = 3.3V  (LCD digital VDD)
+    _write(0x99, 28);   // DLDO1 = 3.3V  (SY7088 boost → LCD backlight)
 
-    // ── Enable LDOs ───────────────────────────────────────────
+    // ── Enable LDOs (DLDO1 deferred) ─────────────────────────
     // bit7=DLDO1 bit5=BLDO1 bit4=BLDO2 bit3=ALDO1 bit2=ALDO2 bit1=ALDO3 bit0=ALDO4
-    _write(0x90, 0xBF);
+    // 0x2F = ALDO1..4 + BLDO1. BLDO2 stays off (no camera). DLDO1
+    // (LCD backlight boost) stays off here — the SY7088 inrush at
+    // power-on browns out a near-flat battery. setBacklight() turns
+    // DLDO1 on later, after the rest of the system has settled.
+    _write(0x90, 0x2F);
   }
 
   // Battery level 0–100 from fuel gauge register
