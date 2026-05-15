@@ -4,6 +4,7 @@
 
 #pragma once
 #include <Arduino.h>
+#include "ConfigManager.h"
 
 class INavigation
 {
@@ -23,6 +24,23 @@ public:
   virtual void update() = 0;
   virtual void begin() = 0;
   virtual void setTouchSwapXY(bool) {}
+
+  // True when this navigation provides distinct UP/DOWN/LEFT/RIGHT input
+  // (cardputer, t-embed, CYD touch, etc., or stick in EncoderC-hat mode).
+  // False for the default 2-axis stick nav (UP/DOWN/PRESS/BACK only).
+  // Screens use this to choose between the canonical 4-way pattern and
+  // the LEFT||UP / RIGHT||DOWN fallback aliasing.
+  virtual bool is4Way() const {
+#ifdef DEVICE_HAS_4WAY_NAV
+    return true;
+#else
+# ifdef DEVICE_HAS_NAV_MODE_SWITCH
+    return Config.get(APP_CONFIG_NAV_MODE, APP_CONFIG_NAV_MODE_DEFAULT) == "encoder";
+# else
+    return false;
+# endif
+#endif
+  }
 
   // Post-render hook: draws the live edge indicator for the active touch zone.
   // Skipped automatically when suppressKeys is set (e.g. touch-nav overall grid).

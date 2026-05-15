@@ -163,8 +163,8 @@ void MainMenuScreen::onUpdate() {
 
     constexpr uint8_t eff = ITEM_COUNT;
 
-#ifdef DEVICE_HAS_4WAY_NAV
-    if (dir == INavigation::DIR_UP) {
+    const bool nav4 = Uni.Nav->is4Way();
+    if (nav4 && dir == INavigation::DIR_UP) {
       if (_selectedIndex >= _cols) {
         _selectedIndex -= _cols;
       } else {
@@ -177,7 +177,7 @@ void MainMenuScreen::onUpdate() {
       onRender();
       if (Uni.Speaker) Uni.Speaker->beep();
     }
-    else if (dir == INavigation::DIR_DOWN) {
+    else if (nav4 && dir == INavigation::DIR_DOWN) {
       uint8_t nextIndex = _selectedIndex + _cols;
       if (nextIndex < eff) {
         _selectedIndex = nextIndex;
@@ -190,9 +190,7 @@ void MainMenuScreen::onUpdate() {
       onRender();
       if (Uni.Speaker) Uni.Speaker->beep();
     }
-    else
-#endif
-    if (dir == INavigation::DIR_LEFT || dir == INavigation::DIR_UP) {
+    else if (dir == INavigation::DIR_LEFT || dir == INavigation::DIR_UP) {
       _selectedIndex = (_selectedIndex == 0) ? eff - 1 : _selectedIndex - 1;
       _scrollIfNeeded();
       onRender();

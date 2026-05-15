@@ -558,13 +558,12 @@ private:
       }
 #endif
 
-#ifdef DEVICE_HAS_4WAY_NAV
-      if (dir == INavigation::DIR_UP) {
+      const bool nav4 = Uni.Nav->is4Way();
+      if (nav4 && dir == INavigation::DIR_UP) {
         _moveBy(-_gridCols());
-      } else if (dir == INavigation::DIR_DOWN) {
+      } else if (nav4 && dir == INavigation::DIR_DOWN) {
         _moveBy(+_gridCols());
       } else
-#endif
       // Linear traversal: 2-button boards emit only UP/DOWN; 4-way boards
       // use LEFT/RIGHT for column steps.
       if (dir == INavigation::DIR_LEFT || dir == INavigation::DIR_UP) {

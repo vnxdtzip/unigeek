@@ -405,16 +405,16 @@ WardriveMapView::NavResult WardriveMapView::onNav(INavigation::Direction dir) {
 
   int32_t step = _panStep();
 
-#ifdef DEVICE_HAS_4WAY_NAV
-  switch (dir) {
-    case INavigation::DIR_LEFT:  moveLng(-step); return NAV_HANDLED;
-    case INavigation::DIR_RIGHT: moveLng(step);  return NAV_HANDLED;
-    case INavigation::DIR_UP:    moveLat(-step); return NAV_HANDLED;
-    case INavigation::DIR_DOWN:  moveLat(step);  return NAV_HANDLED;
-    case INavigation::DIR_PRESS: _recenterOnPath(); return NAV_HANDLED;
-    default: return NAV_IGNORED;
+  if (Uni.Nav->is4Way()) {
+    switch (dir) {
+      case INavigation::DIR_LEFT:  moveLng(-step); return NAV_HANDLED;
+      case INavigation::DIR_RIGHT: moveLng(step);  return NAV_HANDLED;
+      case INavigation::DIR_UP:    moveLat(-step); return NAV_HANDLED;
+      case INavigation::DIR_DOWN:  moveLat(step);  return NAV_HANDLED;
+      case INavigation::DIR_PRESS: _recenterOnPath(); return NAV_HANDLED;
+      default: return NAV_IGNORED;
+    }
   }
-#else
   switch (dir) {
     case INavigation::DIR_PRESS:
       // Axis toggle doesn't move the view — only the HUD chip changes.
@@ -431,7 +431,6 @@ WardriveMapView::NavResult WardriveMapView::onNav(INavigation::Direction dir) {
       return NAV_HANDLED;
     default: return NAV_IGNORED;
   }
-#endif
 }
 
 void WardriveMapView::render(int16_t bx, int16_t by, int16_t bw, int16_t bh) {
@@ -439,7 +438,5 @@ void WardriveMapView::render(int16_t bx, int16_t by, int16_t bw, int16_t bh) {
   g_mapInstance = this;
   _drawTiles();
   _drawPath();
-#ifndef DEVICE_HAS_4WAY_NAV
-  _drawAxisHud();
-#endif
+  if (!Uni.Nav->is4Way()) _drawAxisHud();
 }

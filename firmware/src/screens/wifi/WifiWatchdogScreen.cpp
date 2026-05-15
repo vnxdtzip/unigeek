@@ -126,18 +126,16 @@ void WifiWatchdogScreen::onUpdate()
 #else
       if (dir == INavigation::DIR_BACK) { onBack(); return; }
 
-#ifdef DEVICE_HAS_4WAY_NAV
-      if (dir == INavigation::DIR_UP || dir == INavigation::DIR_DOWN) {
+      const bool nav4 = Uni.Nav->is4Way();
+      if (nav4 && (dir == INavigation::DIR_UP || dir == INavigation::DIR_DOWN)) {
         _gridSel ^= 2;
         _renderOverall();
         if (Uni.Speaker) Uni.Speaker->beep();
-      } else if (dir == INavigation::DIR_LEFT || dir == INavigation::DIR_RIGHT) {
+      } else if (nav4 && (dir == INavigation::DIR_LEFT || dir == INavigation::DIR_RIGHT)) {
         _gridSel ^= 1;
         _renderOverall();
         if (Uni.Speaker) Uni.Speaker->beep();
-      } else
-#endif
-      if (dir == INavigation::DIR_LEFT || dir == INavigation::DIR_UP) {
+      } else if (dir == INavigation::DIR_LEFT || dir == INavigation::DIR_UP) {
         _gridSel = (_gridSel + 3) % 4;
         _renderOverall();
         if (Uni.Speaker) Uni.Speaker->beep();

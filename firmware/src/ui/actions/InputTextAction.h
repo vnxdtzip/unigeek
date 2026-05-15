@@ -227,18 +227,16 @@ private:
       }
 #endif
 
-#ifdef DEVICE_HAS_4WAY_NAV
-      if (dir == INavigation::DIR_UP) {
+      const bool nav4 = Uni.Nav->is4Way();
+      if (nav4 && dir == INavigation::DIR_UP) {
         _commitTap();
         do { _scrollPos = (_scrollPos - _gridCols() + _setCount) % _setCount; }
         while (!_sets[_scrollPos].isSpecial && _sets[_scrollPos].chars == nullptr);
-      } else if (dir == INavigation::DIR_DOWN) {
+      } else if (nav4 && dir == INavigation::DIR_DOWN) {
         _commitTap();
         do { _scrollPos = (_scrollPos + _gridCols()) % _setCount; }
         while (!_sets[_scrollPos].isSpecial && _sets[_scrollPos].chars == nullptr);
-      } else
-#endif
-      if (dir == INavigation::DIR_LEFT || dir == INavigation::DIR_UP) {
+      } else if (dir == INavigation::DIR_LEFT || dir == INavigation::DIR_UP) {
         _commitTap();
         do { _scrollPos = (_scrollPos - 1 + _setCount) % _setCount; }
         while (!_sets[_scrollPos].isSpecial && _sets[_scrollPos].chars == nullptr);
