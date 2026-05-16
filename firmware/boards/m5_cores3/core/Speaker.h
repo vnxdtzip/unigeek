@@ -15,8 +15,18 @@
 // lock. Violating this swallows in-flight tones (confirmed twice: commit 53ff9a2
 // reversed the begin order, c8baec4 added a per-play reconfigure — both broke tone).
 //
-// Tone override exists only to octave-shift up (AW88298 is inaudible below ~700 Hz)
-// and to emit a sine (not square) wave. No I2C chatter on the tone path.
+// Tone override exists to (1) emit a square (not sine) wave at the SoundBeeps
+// WAV amplitude (±50/128) — pure sines have no harmonics and sound thin on
+// the AW88298, while a square wave at audible-floor-straddling frequencies
+// still rings through its odd harmonics (3f, 5f, 7f…) and matches the
+// previous WAV-beep character — (2) drive the I2S clock at a FIXED 24000 Hz
+// rate (different from 44100 install / 16000 WAV, so the legacy ESP-IDF
+// driver's same-rate `i2s_set_clk` short-circuit doesn't kick in; constant
+// across tones so the AW88298 PLL locks once and stays locked). No per-note
+// octave-shifting — that broke melodies (Twinkle) by shifting low notes more
+// than high ones. Callers that need audible random notes (playRandomTone)
+// shift the scale instead. No I2C chatter — the "config-before-BCK" rule
+// above forbids re-configuring AW88298 at runtime.
 //
 
 #pragma once
@@ -40,25 +50,29 @@ public:
     SpeakerI2S::begin();         // installs I2S driver, starts BCK; AW88298 PLL locks
   }
 
-  // Sine tone has far lower peak-to-RMS than WAV content, so scale it to full
-  // int16 range independently of baseAmplitude. At vol=100 the sine peak hits
-  // ±32767 — anything less is inaudible on the AW88298's ~3 W class-D stage.
+  // Tone amplitude tracks WAV/square cap (baseAmplitude=3000). Earlier
+  // attempts to scale tones to full int16 (32767) caused AW88298 over-level
+  // protection to mute the output entirely; matching the WAV path's headroom
+  // keeps everything audible.
   void setVolume(uint8_t vol) override {
     SpeakerI2S::setVolume(vol);
-    _coreAmplitude = (int16_t)((uint32_t)vol * 32767 / 100);
+    _coreAmplitude = (int16_t)((uint32_t)vol * 3000 / 100);
   }
 
   bool isPlaying() override {
     return _coreToneHandle != nullptr || SpeakerI2S::isPlaying();
   }
 
-  // AW88298 is inaudible below ~700 Hz — octave-shift up.
+  // Drops one octave (freq / 2) so requested pitches land in the same range
+  // as the previous BEEP1..7 WAVs (C4..B4, 262..494 Hz) — that's the timbre
+  // users associate with this device. Square-wave harmonics keep everything
+  // audible despite AW88298's ~700 Hz floor. Uniform shift preserves
+  // melodic intervals (no per-note threshold like the old `while < 700` hack).
   // NO I2C writes here: reconfiguring AW88298 with BCK active swallows the beep.
   void tone(uint16_t freq, uint32_t durationMs) override {
-    while (freq > 0 && freq < 700) freq <<= 1;
     _stopCoreTone();
     SpeakerI2S::noTone();
-    _coreFreq = freq;
+    _coreFreq = freq >> 1;
     _coreDur  = durationMs;
     xTaskCreate(_sineToneTask, "spktone", 4096, this, 2, &_coreToneHandle);
   }
@@ -68,18 +82,14 @@ public:
     SpeakerI2S::noTone();
   }
 
-  // Play one of 7 WAV beeps matching scale {60,62,64,65,67,69,71} (C4–B4).
+  // Shift random scale up so post-tone()-octave-down notes land above the
+  // AW88298 audibility floor (~700 Hz). tone() halves freq, so +36 semitones
+  // here yields a net +24 actual shift: MIDI 60..71 + 24 = 84..95 = 1047..1976 Hz.
   void playRandomTone(int semitoneShift = 0, uint32_t durationMs = 150) override {
-    static const uint8_t* const beeps[7] = {
-      BEEP1_SOUND, BEEP2_SOUND, BEEP3_SOUND, BEEP4_SOUND,
-      BEEP5_SOUND, BEEP6_SOUND, BEEP7_SOUND
-    };
-    static const size_t sizes[7] = {
-      sizeof(BEEP1_SOUND), sizeof(BEEP2_SOUND), sizeof(BEEP3_SOUND), sizeof(BEEP4_SOUND),
-      sizeof(BEEP5_SOUND), sizeof(BEEP6_SOUND), sizeof(BEEP7_SOUND)
-    };
-    int idx = random(0, 7);
-    playWav(beeps[idx], sizes[idx]);
+    static constexpr int scale[] = {60, 62, 64, 65, 67, 69, 71};
+    int      midi = scale[random(0, 7)] + semitoneShift + 36;
+    uint16_t freq = (uint16_t)(440.0f * powf(2.0f, (float)(midi - 69) / 12.0f));
+    tone(freq, durationMs);
   }
 
 private:
@@ -111,36 +121,56 @@ private:
     }
   }
 
-  // Sine wave LUT — matches M5Unified _default_tone_wav exactly.
+  // Fixed-rate phase-accumulated tone. Two constraints to satisfy at once:
+  //   (a) i2s_set_clk must be a real rate change vs. the driver's current
+  //       state, or the legacy ESP-IDF driver on S3 short-circuits the call
+  //       and TX never re-arms — so we use TONE_RATE (24000), which differs
+  //       from both the install default (44100) and the WAV rate (16000).
+  //   (b) the AW88298 PLL (sysclk derived from BCLK per reg 0x61) must not
+  //       relock per-tone, or it doesn't settle before short tones end —
+  //       that was the bug when we used sample_rate = freq*16 per tone.
+  // Fixed rate solves (b): every tone targets the same 24000 Hz BCK divisor,
+  // so the PLL locks once and stays locked across the tone sequence.
   static void _sineToneTask(void* arg) {
     auto* self = static_cast<SpeakerCoreS3*>(arg);
-    static constexpr uint8_t sineWav[16] = {
-      177, 219, 246, 255, 246, 219, 177, 128, 79, 37, 10, 1, 10, 37, 79, 128
+    // Trapezoidal LUT @ ±50/128 — flat plateaus give the "beep" plateau
+    // character of the SoundBeeps WAV blobs, while 3-sample linear ramps
+    // through the zero-crossing soften the transitions so high-note harmonics
+    // don't alias above Nyquist (TONE_RATE/2 = 12 kHz) and produce treble buzz.
+    static constexpr uint8_t toneWav[16] = {
+      178, 178, 178, 178, 178, 153, 128, 103,
+       78,  78,  78,  78,  78, 103, 128, 153
     };
+    static constexpr uint32_t TONE_RATE = 24000;
 
-    const uint32_t sampleRate = 44100;
-    uint32_t totalFrames = sampleRate * self->_coreDur / 1000;
-    uint32_t phaseInc    = ((uint32_t)self->_coreFreq * 16u * 256u) / sampleRate;
+    const uint32_t totalFrames = TONE_RATE * self->_coreDur / 1000;
+    uint32_t phaseInc = ((uint32_t)self->_coreFreq * 16u * 256u) / TONE_RATE;
     if (phaseInc == 0) phaseInc = 1;
+    const int16_t amp = self->_coreAmplitude;
     uint32_t phase = 0;
 
-    int16_t  buf[128];
-    uint32_t done = 0;
+    i2s_set_clk((i2s_port_t)SPK_I2S_PORT, TONE_RATE,
+                I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO);
 
+    int16_t  buf[128 * 2];  // 128 frames stereo = 512 bytes per write
+    uint32_t done = 0;
     while (done < totalFrames) {
-      uint32_t chunk = (totalFrames - done) < 64 ? (totalFrames - done) : 64;
+      uint32_t chunk = (totalFrames - done) < 128 ? (totalFrames - done) : 128;
       for (uint32_t i = 0; i < chunk; i++) {
         uint8_t idx = (phase >> 8) & 0xF;
-        int16_t s   = (int16_t)((int32_t)(sineWav[idx] - 128) * self->_coreAmplitude / 127);
+        int16_t s   = (int16_t)((int32_t)(toneWav[idx] - 128) * amp / 127);
         buf[i * 2]     = s;
         buf[i * 2 + 1] = s;
         phase += phaseInc;
       }
-      size_t written;
-      i2s_write((i2s_port_t)SPK_I2S_PORT, buf, chunk * 2 * sizeof(int16_t), &written, portMAX_DELAY);
+      size_t written = 0;
+      i2s_write((i2s_port_t)SPK_I2S_PORT, buf,
+                chunk * 2 * sizeof(int16_t), &written, portMAX_DELAY);
       done += chunk;
     }
     i2s_zero_dma_buffer((i2s_port_t)SPK_I2S_PORT);
+    // Restore default clock so subsequent WAV plays start from a known rate.
+    i2s_set_clk((i2s_port_t)SPK_I2S_PORT, 44100, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO);
     self->_coreToneHandle = nullptr;
     vTaskDelete(nullptr);
   }
