@@ -26,9 +26,11 @@ void MainMenuScreen::onInit() {
   _items[6] = {"Games", Icons::drawGame};
   _items[7] = {"Settings", Icons::drawSetting};
 #ifdef APP_MENU_POWER_OFF
-  _items[8] = {"Power Off", Icons::drawPower};
 # ifdef DEVICE_HAS_TOUCH_NAV
-  _items[9] = {"Home", Icons::drawHome};
+  _items[8] = {"Home", Icons::drawHome};
+  _items[9] = {"Power Off", Icons::drawPower};
+# else
+  _items[8] = {"Power Off", Icons::drawPower};
 # endif
 #elif defined(DEVICE_HAS_TOUCH_NAV)
   _items[8] = {"Home", Icons::drawHome};
@@ -295,9 +297,11 @@ void MainMenuScreen::onItemSelected(uint8_t index) {
   case 6: Screen.push(new GameMenuScreen());     break;
   case 7: Screen.push(new SettingScreen());      break;
 #ifdef APP_MENU_POWER_OFF
-  case 8: Uni.Power.powerOff(); break;
 # ifdef DEVICE_HAS_TOUCH_NAV
-  case 9: onBack(); break;
+  case 8: onBack(); break;
+  case 9: Uni.Power.powerOff(); break;
+# else
+  case 8: Uni.Power.powerOff(); break;
 # endif
 #elif defined(DEVICE_HAS_TOUCH_NAV)
   case 8: onBack(); break;
