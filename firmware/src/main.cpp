@@ -120,7 +120,6 @@ void setup() {
 
   if (psramFound()) {
     mbedtls_platform_set_calloc_free(_mbedtlsPsramCalloc, _mbedtlsPsramFree);
-    Serial.println("[mbedTLS] allocator: PSRAM");
   }
 
   Uni.begin();

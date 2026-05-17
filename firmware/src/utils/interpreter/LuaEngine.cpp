@@ -1047,26 +1047,17 @@ static int _http_request(lua_State* L, const char* method, const char* url,
   // netif already has an IP. HTTPClient::begin()/GET() surfaces a real
   // transport error if WiFi is genuinely down (we just propagate the code).
 
-  Serial.printf("[Lua/http] %s %s (free heap=%u, largest=%u, wifi=%d, ip=%s)\n",
-                method, url, (unsigned)ESP.getFreeHeap(),
-                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-                (int)WiFi.status(), WiFi.localIP().toString().c_str());
-
   // Compact the Lua VM before the SSL handshake. mbedTLS needs ~30 KB
   // contiguous internal SRAM for buffers + session state; a freshly-loaded
   // VM often leaves only ~20 KB free between script-side garbage. A full GC
   // typically reclaims 5–10 KB — enough to land the handshake.
   lua_gc(L, LUA_GCCOLLECT, 0);
-  Serial.printf("[Lua/http] heap after GC=%u, largest=%u\n",
-                (unsigned)ESP.getFreeHeap(),
-                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 
   WiFiClientSecure client;
   client.setInsecure();
   HTTPClient http;
   http.setTimeout(15000);
   if (!http.begin(client, url)) {
-    Serial.println("[Lua/http] begin() returned false");
     lua_pushnil(L);
     lua_pushinteger(L, -2);
     lua_pushstring(L, "begin() failed (bad URL?)");
@@ -1081,9 +1072,6 @@ static int _http_request(lua_State* L, const char* method, const char* url,
     code = http.GET();
   }
 
-  Serial.printf("[Lua/http] code=%d (%s)\n",
-                code, HTTPClient::errorToString(code).c_str());
-
   if (code <= 0) {
     String err = HTTPClient::errorToString(code);
     http.end();
@@ -1096,7 +1084,6 @@ static int _http_request(lua_State* L, const char* method, const char* url,
   int len = http.getSize();
   if (len > 0 && (size_t)len > kHttpMaxBody) {
     http.end();
-    Serial.printf("[Lua/http] response too large: %d bytes\n", len);
     lua_pushnil(L);
     lua_pushinteger(L, -3);   // too large
     lua_pushstring(L, "response too large");
@@ -1112,7 +1099,6 @@ static int _http_request(lua_State* L, const char* method, const char* url,
     return 3;
   }
 
-  Serial.printf("[Lua/http] body length=%u\n", (unsigned)resp.length());
   lua_pushlstring(L, resp.c_str(), resp.length());
   lua_pushinteger(L, code);
   lua_pushstring(L, "");
