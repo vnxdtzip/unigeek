@@ -79,8 +79,8 @@ public:
   ISpeaker*   Speaker    = nullptr;
   ExtSpiClass* Spi        = nullptr;  // shared SPI bus (nullable, board-specific)
   int8_t      StorageDcPin = -1;     // shared DC/MISO GPIO — set by board before initStorage() if needed
-  TwoWire*    ExI2C      = nullptr;  // external I2C — board-initialized on default pins; caller may re-begin(sda,scl) to retarget (e.g. runtime ext_sda/ext_scl). Do not end().
-  TwoWire*    InI2C      = nullptr;  // internal I2C — board-initialized, do not end()
+  TwoWire*    ExI2C      = nullptr;  // free I2C for external modules (Grove port: NFC, GPS, sensors). Board begins on default pins; caller may re-begin(sda,scl) to retarget.
+  TwoWire*    InI2C      = nullptr;  // internal I2C — used by on-board ICs that exist at boot (AXP, RTC, codec, keyboard, touch). Board-initialized; do not end() or re-begin.
   unsigned long lastActiveMs = 0;    // last user input timestamp — updated by update()
   bool lcdOff = false;               // true while display is off — screens should skip rendering
 
