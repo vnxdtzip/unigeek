@@ -60,6 +60,7 @@ public:
       { 15, "wifi_download_10",          "Data Hoarder",           0, 1, "Download 10 files over WiFi" },
       { 16, "wifi_download_ir",          "Remote Arsenal",         0, 1, "Download IR codes from the internet" },
       { 17, "wifi_download_badusb",      "Payload Collector",      0, 1, "Download BadUSB scripts from the internet" },
+      { 244, "wifi_download_lua",         "Script Kiddie",          0, 1, "Download a Lua script from the unigeek-lua repo" },
       { 18, "wifi_world_clock",          "Time Lord",              0, 0, "View world clock via WiFi time sync" },
       { 19, "wifi_wigle_visit",          "WiGLE Curious",          0, 0, "Discover the WiGLE upload section from the WiFi menu" },
       // ── WiFi Attacks (domain 1) ────────────────────────────────────────────

@@ -9,6 +9,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <cJSON.h>
 
 void DownloadScreen::onInit() {
   if (!Uni.Storage || !Uni.Storage->isAvailable()) {
@@ -40,6 +41,11 @@ void DownloadScreen::onBack() {
     _showBadUSBOSFromCache();
     return;
   }
+  if (_state == STATE_LUA_BROWSE) {
+    if (_luaPath.length() == 0) { _showMenu(); return; }
+    _luaPopPath();
+    return;
+  }
   Screen.goBack();
 }
 
@@ -56,12 +62,17 @@ void DownloadScreen::onItemSelected(uint8_t index) {
     _downloadBadUSBCategory(index);
     return;
   }
+  if (_state == STATE_LUA_BROWSE) {
+    _luaSelect(index);
+    return;
+  }
 
   switch (index) {
     case 0: _downloadWebPage();      break;
     case 1: _downloadSampleData();   break;
     case 2: _showIRCategories();     break;
     case 3: _showBadUSBOS();         break;
+    case 4: _showLuaRoot();          break;
   }
 }
 
@@ -80,7 +91,8 @@ void DownloadScreen::_showMenu() {
   _menuItems[1] = {"Firmware Sample Files"};
   _menuItems[2] = {"Infrared Files"};
   _menuItems[3] = {"BadUSB Scripts"};
-  setItems(_menuItems, 4);
+  _menuItems[4] = {"Lua Scripts"};
+  setItems(_menuItems, 5);
 }
 
 // ── Download Web File Manager Page ────────────────────────
@@ -684,5 +696,172 @@ void DownloadScreen::_downloadBadUSBCategory(uint8_t index) {
   String msg = String(downloaded) + " files downloaded";
   if (failed > 0) msg += "\n" + String(failed) + " failed";
   ShowStatusAction::show(msg.c_str(), 2000);
+  render();
+}
+
+// ── Lua Scripts ───────────────────────────────────────────
+//
+// Hierarchical browse of github.com/lshaf/unigeek-lua via the Contents API.
+// Each level is a JSON array of { name, type, ... }. Folders ("type":"dir")
+// descend; .lua files ("type":"file") download to /unigeek/lua/<path>/<name>.
+// Folders are listed before files at each level. No manifest file required.
+// GitHub unauthenticated API rate limit is 60/hr per IP.
+
+void DownloadScreen::_showLuaRoot() {
+  if (WiFi.status() != WL_CONNECTED) {
+    ShowStatusAction::show("WiFi not connected");
+    return;
+  }
+  _luaPath = "";
+  if (!_fetchLuaLevel(_luaPath)) return;
+  _state = STATE_LUA_BROWSE;
+  strcpy(_titleBuf, "Lua Scripts");
+  _navReadyAt = millis() + 200;
+  setItems(_luaItems, _luaCount);
+}
+
+bool DownloadScreen::_fetchLuaLevel(const String& path) {
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+
+  ProgressView::init();
+  ProgressView::progress("Fetching...", 0);
+
+  String url = String(LUA_API_BASE);
+  if (path.length() > 0) url += "/" + path;
+  url += "?ref=main";
+
+  http.begin(client, url);
+  http.addHeader("User-Agent", "ESP32-UniGeek");
+  http.addHeader("Accept", "application/vnd.github+json");
+  int code = http.GET();
+  if (code != HTTP_CODE_OK) {
+    http.end();
+    String msg = (code == 403)
+      ? "GitHub rate limit hit"
+      : ("Failed (" + String(code) + ")");
+    ShowStatusAction::show(msg.c_str());
+    render();
+    return false;
+  }
+
+  String body = http.getString();
+  http.end();
+
+  cJSON* root = cJSON_Parse(body.c_str());
+  if (!root || !cJSON_IsArray(root)) {
+    if (root) cJSON_Delete(root);
+    ShowStatusAction::show("Bad API response");
+    render();
+    return false;
+  }
+
+  // Two passes: folders first, then .lua files. Stable order within each pass.
+  _luaCount = 0;
+  for (int pass = 0; pass < 2 && _luaCount < kMaxLuaEntries; pass++) {
+    bool wantFolder = (pass == 0);
+    cJSON* entry = nullptr;
+    cJSON_ArrayForEach(entry, root) {
+      if (_luaCount >= kMaxLuaEntries) break;
+      cJSON* jType = cJSON_GetObjectItem(entry, "type");
+      cJSON* jName = cJSON_GetObjectItem(entry, "name");
+      if (!cJSON_IsString(jType) || !cJSON_IsString(jName)) continue;
+
+      bool isDir = strcmp(jType->valuestring, "dir") == 0;
+      if (isDir != wantFolder) continue;
+
+      String name = jName->valuestring;
+      if (!isDir && !name.endsWith(".lua")) continue;  // skip non-lua files
+      if (name.length() == 0) continue;
+
+      _luaIsFolder[_luaCount] = isDir;
+      _luaNames[_luaCount]    = name;
+      _luaLabels[_luaCount]   = isDir ? (name + "/") : name;
+      _luaItems[_luaCount]    = {_luaLabels[_luaCount].c_str()};
+      _luaCount++;
+    }
+  }
+
+  cJSON_Delete(root);
+
+  if (_luaCount == 0) {
+    ShowStatusAction::show("Empty folder");
+    render();
+    return false;
+  }
+  return true;
+}
+
+void DownloadScreen::_luaSelect(uint8_t index) {
+  if (index >= _luaCount) return;
+
+  if (_luaIsFolder[index]) {
+    String next = _luaPath.length() > 0
+      ? (_luaPath + "/" + _luaNames[index])
+      : _luaNames[index];
+    if (!_fetchLuaLevel(next)) return;
+    _luaPath = next;
+    int slash = _luaPath.lastIndexOf('/');
+    String tail = slash < 0 ? _luaPath : _luaPath.substring(slash + 1);
+    String t = String("Lua: ") + tail;
+    strncpy(_titleBuf, t.c_str(), sizeof(_titleBuf) - 1);
+    _titleBuf[sizeof(_titleBuf) - 1] = '\0';
+    _navReadyAt = millis() + 200;
+    setItems(_luaItems, _luaCount);
+    return;
+  }
+
+  _downloadLuaScript(index);
+}
+
+void DownloadScreen::_luaPopPath() {
+  int slash = _luaPath.lastIndexOf('/');
+  String parent = slash < 0 ? String("") : _luaPath.substring(0, slash);
+  if (!_fetchLuaLevel(parent)) return;
+  _luaPath = parent;
+  if (_luaPath.length() == 0) {
+    strcpy(_titleBuf, "Lua Scripts");
+  } else {
+    int s = _luaPath.lastIndexOf('/');
+    String tail = s < 0 ? _luaPath : _luaPath.substring(s + 1);
+    String t = String("Lua: ") + tail;
+    strncpy(_titleBuf, t.c_str(), sizeof(_titleBuf) - 1);
+    _titleBuf[sizeof(_titleBuf) - 1] = '\0';
+  }
+  _navReadyAt = millis() + 200;
+  setItems(_luaItems, _luaCount);
+}
+
+void DownloadScreen::_downloadLuaScript(uint8_t index) {
+  if (index >= _luaCount || _luaIsFolder[index]) return;
+
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  String name = _luaNames[index];
+  String rel  = _luaPath.length() > 0 ? (_luaPath + "/" + name) : name;
+  String url  = String(LUA_RAW_BASE) + "/" + rel;
+  String dest = String(LUA_DL_BASE) + "/" + rel;
+
+  ShowStatusAction::show(("Downloading " + name + "...").c_str(), 0);
+
+  for (int i = 1; i < (int)dest.length(); i++) {
+    if (dest[i] == '/') Uni.Storage->makeDir(dest.substring(0, i).c_str());
+  }
+
+  bool ok = _downloadFile(client, url.c_str(), dest.c_str());
+  if (!ok) {
+    ShowStatusAction::show(("Failed: " + name).c_str(), 1800);
+    render();
+    return;
+  }
+
+  int n = Achievement.inc("wifi_download_lua");
+  if (n == 1) Achievement.unlock("wifi_download_lua");
+
+  ShowStatusAction::show(("Saved: " + name).c_str(), 1500);
+  // Stay on the current level so the user can grab more scripts.
+  setItems(_luaItems, _luaCount);
   render();
 }
