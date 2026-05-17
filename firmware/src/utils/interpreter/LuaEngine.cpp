@@ -1028,7 +1028,12 @@ int LuaEngine::_wifi_connect(lua_State* L) {
 
 int LuaEngine::_wifi_disconnect(lua_State* L) {
   LuaEngine* eng = _fromState(L);
-  WiFi.disconnect(true);
+  // WiFi.disconnect() (no args) — disassociates from the AP without calling
+  // esp_wifi_deinit(). Passing `true` would deinit the driver, after which a
+  // subsequent WiFi.begin() can't re-init under heap pressure ("Expected to
+  // init 4 rx buffer, actual is 0"). Re-association is fine; full driver
+  // teardown is not.
+  WiFi.disconnect();
   if (eng) eng->_scriptStartedWifi = false;
   return 0;
 }
@@ -1037,20 +1042,35 @@ static constexpr size_t kHttpMaxBody = 256 * 1024;  // 256 KB cap
 
 static int _http_request(lua_State* L, const char* method, const char* url,
                          const char* body, size_t bodyLen) {
-  if (WiFi.status() != WL_CONNECTED) {
-    lua_pushnil(L);
-    lua_pushinteger(L, -1);
-    return 2;
-  }
+  // No upfront WiFi.status() gate — the Arduino-ESP32 status tracker is
+  // event-driven and can lag for a tick right after connect, even though the
+  // netif already has an IP. HTTPClient::begin()/GET() surfaces a real
+  // transport error if WiFi is genuinely down (we just propagate the code).
+
+  Serial.printf("[Lua/http] %s %s (free heap=%u, largest=%u, wifi=%d, ip=%s)\n",
+                method, url, (unsigned)ESP.getFreeHeap(),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                (int)WiFi.status(), WiFi.localIP().toString().c_str());
+
+  // Compact the Lua VM before the SSL handshake. mbedTLS needs ~30 KB
+  // contiguous internal SRAM for buffers + session state; a freshly-loaded
+  // VM often leaves only ~20 KB free between script-side garbage. A full GC
+  // typically reclaims 5–10 KB — enough to land the handshake.
+  lua_gc(L, LUA_GCCOLLECT, 0);
+  Serial.printf("[Lua/http] heap after GC=%u, largest=%u\n",
+                (unsigned)ESP.getFreeHeap(),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 
   WiFiClientSecure client;
   client.setInsecure();
   HTTPClient http;
   http.setTimeout(15000);
   if (!http.begin(client, url)) {
+    Serial.println("[Lua/http] begin() returned false");
     lua_pushnil(L);
     lua_pushinteger(L, -2);
-    return 2;
+    lua_pushstring(L, "begin() failed (bad URL?)");
+    return 3;
   }
   http.addHeader("User-Agent", "ESP32-UniGeek");
 
@@ -1061,19 +1081,26 @@ static int _http_request(lua_State* L, const char* method, const char* url,
     code = http.GET();
   }
 
+  Serial.printf("[Lua/http] code=%d (%s)\n",
+                code, HTTPClient::errorToString(code).c_str());
+
   if (code <= 0) {
+    String err = HTTPClient::errorToString(code);
     http.end();
     lua_pushnil(L);
     lua_pushinteger(L, code);
-    return 2;
+    lua_pushstring(L, err.c_str());
+    return 3;
   }
 
   int len = http.getSize();
   if (len > 0 && (size_t)len > kHttpMaxBody) {
     http.end();
+    Serial.printf("[Lua/http] response too large: %d bytes\n", len);
     lua_pushnil(L);
     lua_pushinteger(L, -3);   // too large
-    return 2;
+    lua_pushstring(L, "response too large");
+    return 3;
   }
   String resp = http.getString();
   http.end();
@@ -1081,12 +1108,15 @@ static int _http_request(lua_State* L, const char* method, const char* url,
   if (resp.length() > kHttpMaxBody) {
     lua_pushnil(L);
     lua_pushinteger(L, -3);
-    return 2;
+    lua_pushstring(L, "response too large");
+    return 3;
   }
 
+  Serial.printf("[Lua/http] body length=%u\n", (unsigned)resp.length());
   lua_pushlstring(L, resp.c_str(), resp.length());
   lua_pushinteger(L, code);
-  return 2;
+  lua_pushstring(L, "");
+  return 3;
 }
 
 int LuaEngine::_http_get(lua_State* L) {
@@ -1104,8 +1134,9 @@ int LuaEngine::_http_post(lua_State* L) {
 void LuaEngine::_cleanupNetwork() {
   // Only tear down WiFi if the script itself brought it up — otherwise
   // we'd disconnect the Web File Manager or whatever else is using it.
+  // Disassociate without deiniting the driver (see _wifi_disconnect note).
   if (_scriptStartedWifi) {
-    WiFi.disconnect(true);
+    WiFi.disconnect();
     _scriptStartedWifi = false;
   }
   // HTTPClient state isn't cached — each call uses a local instance that's

@@ -704,20 +704,24 @@ Load with `local http = require("uni.http")`. Requires `wifi.status() == "connec
 > [!note]
 > Response bodies are capped at **256 KB** to keep a stray URL from OOM'ing the Lua VM. A response larger than that returns `nil, -3`.
 
+> [!warn]
+> **HTTPS support is board-dependent.** mbedTLS needs ~30 KB of contiguous internal SRAM for the TLS handshake. The runner forces a full Lua GC before every request, and on **PSRAM-equipped boards** (CoreS3, StickS3) the mbedTLS allocator is redirected to PSRAM so HTTPS always works. On **no-PSRAM boards** (Cardputer, Cardputer Adv, StickC Plus, T-Display, …) the TLS handshake competes for the same internal SRAM as the WiFi driver's DMA buffers and the Lua VM — `SSL - Memory allocation failed` (HTTP code `-1`) is the typical symptom when memory is tight. Plain `http://` works on every board; for HTTPS on no-PSRAM hardware, consider hitting a local-proxy URL or moving to a PSRAM-equipped board.
+
 | Function | Returns | Notes |
 |---|---|---|
-| `http.get(url)` | string \| nil, code | Body on success; `nil` + negative code on failure |
-| `http.post(url, [body])` | string \| nil, code | Same shape. `body` is a Lua string (any bytes) |
+| `http.get(url)` | body, code, err | `body` is a Lua string on success or `nil` on failure; `code` is HTTP status or negative error; `err` is a human-readable string (`""` on success) |
+| `http.post(url, [body])` | body, code, err | Same shape. `body` is a Lua string (any bytes) |
+
+Two-value capture (`local body, code = http.get(url)`) still works — the error string is discarded.
 
 Return-code convention:
 
 | `code` | Meaning |
 |---|---|
 | ≥ 100 | HTTP status (200, 404, 500, …) |
-| `-1` | Not connected to WiFi |
 | `-2` | `http.begin()` failed (bad URL) |
 | `-3` | Response too large (≥ 256 KB) |
-| other negative | HTTPClient transport error |
+| other negative | HTTPClient transport error — connection refused, DNS failure, no WiFi, etc. (see `HTTPClient::errorToString`) |
 
 ```lua
 local http = require("uni.http")
@@ -923,7 +927,7 @@ wifi.connect(ssid, [pass], [tmo])   -- bool — blocks up to tmo ms (default 100
 wifi.disconnect()                   -- drop connection
 -- Runner auto-disconnects on exit IF the script's wifi.connect() was the one that brought WiFi up.
 
-http.get(url)                       -- body | nil, code (≥100=http status, -1=no wifi, -2=bad url, -3=too big)
+http.get(url)                       -- body | nil, code (≥100=http status, -2=bad url, -3=too big, other negative=transport error)
 http.post(url, [body])              -- same shape; body is any Lua string
 -- Response bodies are capped at 256 KB; over-cap returns nil, -3.
 

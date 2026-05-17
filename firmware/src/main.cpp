@@ -1,5 +1,10 @@
 // cpp
 #include <Arduino.h>
+#include <esp_heap_caps.h>
+#include <esp32-hal-psram.h>
+extern "C" {
+  #include "mbedtls/platform.h"
+}
 
 #include "core/Device.h"
 #include "core/ScreenManager.h"
@@ -85,8 +90,39 @@ void _bootSplash() {
   delay(300);
 }
 
+// ── mbedTLS allocator override (PSRAM boards only) ───────────────────────────
+//
+// mbedTLS's rx buffer wants a contiguous ~16 KB block. Once the Lua VM (or any
+// busy subsystem) has run, internal SRAM is fragmented even though total free
+// is plenty — TLS handshake fails with -32512 (MBEDTLS_ERR_SSL_ALLOC_FAILED).
+//
+// On PSRAM boards (cores3, sticks3) we route every mbedTLS alloc to PSRAM.
+// 8 MB of empty external RAM dodges fragmentation entirely; PSRAM cache
+// contention with WiFi isn't latency-critical for TLS.
+//
+// On no-PSRAM boards (cardputer_adv, cardputer, stickcplus_*) there's no
+// clean fix: any reservation we make in internal SRAM competes with the
+// WiFi driver's own 40 KB DMA-capable allocation, and starving WiFi is
+// worse than failing TLS. HTTPS from Lua scripts on no-PSRAM boards may
+// fail under heap pressure — see lua-runner.md.
+
+static void* _mbedtlsPsramCalloc(size_t n, size_t size) {
+  void* p = heap_caps_calloc(n, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!p) p = heap_caps_calloc(n, size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  return p;
+}
+static void _mbedtlsPsramFree(void* p) {
+  heap_caps_free(p);
+}
+
 void setup() {
   Serial.begin(115200);
+
+  if (psramFound()) {
+    mbedtls_platform_set_calloc_free(_mbedtlsPsramCalloc, _mbedtlsPsramFree);
+    Serial.println("[mbedTLS] allocator: PSRAM");
+  }
+
   Uni.begin();
   Uni.initStorage();
 #ifdef DEVICE_HAS_RTC
