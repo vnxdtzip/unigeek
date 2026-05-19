@@ -46,7 +46,8 @@ function ConsoleLine({ cls = 'dim', children, html }) {
   return <div><span className={cls}>{children}</span></div>;
 }
 
-export default function Flasher({ board, firmwareVersion, method, methodInfo }) {
+export default function Flasher({ board, firmwareVersion, method, methodInfo, binUrl, isOldVersion = false }) {
+  const downloadUrl = binUrl;
   const [status, setStatus] = useState(STATUS.IDLE);
   const [progress, setProgress] = useState(0);
   const [progressLabel, setProgressLabel] = useState('Ready');
@@ -128,8 +129,13 @@ export default function Flasher({ board, firmwareVersion, method, methodInfo }) 
       setStatus(STATUS.FLASHING);
       setProgressLabel('Fetching firmware');
       logHtml(`  fetching firmware ............`);
-      const resp = await fetch(board.bin);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching ${board.bin}`);
+      const resp = await fetch(downloadUrl);
+      if (!resp.ok) {
+        if (resp.status === 404 && isOldVersion) {
+          throw new Error(`HTTP 404 — this board (${board.id}) was not part of v${firmwareVersion}. Pick a newer firmware version or a different board.`);
+        }
+        throw new Error(`HTTP ${resp.status} fetching ${downloadUrl}`);
+      }
       const buffer = await resp.arrayBuffer();
       const sizeKb = (buffer.byteLength / 1024).toFixed(0);
       logHtml(`  firmware ready: <span class="key">${sizeKb} KB</span>`);
@@ -160,7 +166,7 @@ export default function Flasher({ board, firmwareVersion, method, methodInfo }) 
       setStatus(STATUS.ERROR);
       setProgressLabel('Error');
     }
-  }, [board, firmwareVersion, manualMode, webSerialSupported, logHtml, resetConsole]);
+  }, [board, firmwareVersion, manualMode, webSerialSupported, logHtml, resetConsole, downloadUrl, isOldVersion]);
 
   const doDisconnect = useCallback(async () => {
     try {
@@ -192,7 +198,7 @@ export default function Flasher({ board, firmwareVersion, method, methodInfo }) 
         <div className="flasher-summary">
           <div className="flasher-kv"><span>Board</span><span>{board.name}</span></div>
           <div className="flasher-kv"><span>Chip</span><span>{board.chip}</span></div>
-          <div className="flasher-kv"><span>Firmware</span><span>v{firmwareVersion}</span></div>
+          <div className="flasher-kv"><span>Firmware</span><span>v{firmwareVersion}{isOldVersion ? ' · archive' : ''}</span></div>
           <div className="flasher-kv"><span>Method</span><span>{methodInfo?.name}</span></div>
           <div className="flasher-kv"><span>Target</span><span>{board.id}.bin</span></div>
         </div>
@@ -200,7 +206,7 @@ export default function Flasher({ board, firmwareVersion, method, methodInfo }) 
         {manualMode ? (
           <a
             className="flash-button-big"
-            href={board.bin}
+            href={downloadUrl}
             download
             style={{ textDecoration: 'none' }}
           >
@@ -225,7 +231,7 @@ export default function Flasher({ board, firmwareVersion, method, methodInfo }) 
         )}
 
         <div className="alt-links">
-          <a className="alt-link" href={board.bin} download>
+          <a className="alt-link" href={downloadUrl} download>
             <span>Download .bin directly</span><span className="arr">↓</span>
           </a>
           {status === STATUS.DONE || status === STATUS.ERROR ? (

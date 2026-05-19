@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Flasher from './Flasher';
 import BoardInfo from './BoardInfo';
 import { toCaps, shortChip } from '@/content/board-caps';
-import { FIRMWARE_VERSION } from '@/content/meta';
+import { FIRMWARE_VERSION, FIRMWARE_PROXY } from '@/content/meta';
 
 const METHODS = [
   {
@@ -33,14 +33,42 @@ function getBrand(id) {
   return 'other';
 }
 
-export default function InstallFlow({ boards }) {
+function resolveBinUrl(boardId, selectedVersion) {
+  return `${FIRMWARE_PROXY}/${selectedVersion}/unigeek-${boardId}.bin`;
+}
+
+export default function InstallFlow({ boards, versions = [], latestVersion = FIRMWARE_VERSION }) {
   const [boardId, setBoardId] = useState(boards[0]?.id ?? null);
   const [method, setMethod] = useState('web');
   const [brand, setBrand] = useState('m5stack');
+  const [version, setVersion] = useState(latestVersion);
+
+  // Set of board IDs that shipped in the selected version's release. If the
+  // map is missing for a version (e.g. someone hasn't run sync-releases),
+  // treat every board as supported so we don't accidentally hide all of them.
+  const supportedIds = useMemo(() => {
+    const entry = versions.find((v) => v.version === version);
+    if (!entry || !Array.isArray(entry.boards) || entry.boards.length === 0) return null;
+    return new Set(entry.boards);
+  }, [versions, version]);
+
+  const isSupported = (id) => !supportedIds || supportedIds.has(id);
 
   const filteredBoards = brand ? boards.filter((b) => getBrand(b.id) === brand) : boards;
-  const board = filteredBoards.find((b) => b.id === boardId) || filteredBoards[0];
+  const supportedCount = filteredBoards.filter((b) => isSupported(b.id)).length;
+  const board = filteredBoards.find((b) => b.id === boardId) || filteredBoards.find((b) => isSupported(b.id)) || filteredBoards[0];
   const methodInfo = METHODS.find((m) => m.id === method);
+  const isOldVersion = version !== latestVersion;
+  const binUrl = board ? resolveBinUrl(board.id, version) : null;
+
+  // If the user switches to an older version that drops the currently-selected
+  // board, jump to the first board that does ship in that version.
+  useEffect(() => {
+    if (!supportedIds || !boardId) return;
+    if (supportedIds.has(boardId)) return;
+    const fallback = filteredBoards.find((b) => supportedIds.has(b.id)) || boards.find((b) => supportedIds.has(b.id));
+    if (fallback) setBoardId(fallback.id);
+  }, [supportedIds, boardId, filteredBoards, boards]);
 
   function handleBrandChange(newBrand) {
     const next = newBrand === brand ? null : newBrand;
@@ -55,39 +83,76 @@ export default function InstallFlow({ boards }) {
       <div className="step-head">
         <div className="step-num">Step 01</div>
         <div className="step-title">Select your board</div>
-        <div className="step-sub">{filteredBoards.length} of {boards.length} boards</div>
+        <div className="step-sub">
+          {supportedIds
+            ? `${supportedCount} of ${filteredBoards.length} available in v${version}`
+            : `${filteredBoards.length} of ${boards.length} boards`}
+        </div>
       </div>
-      <div className="brand-filter">
-        {BRANDS.map((br) => (
-          <button
-            key={br.id}
-            type="button"
-            className={`brand-btn${brand === br.id ? ' active' : ''}`}
-            onClick={() => handleBrandChange(br.id)}
-          >
-            {br.label}
-          </button>
-        ))}
-      </div>
-      <div className="board-grid">
-        {filteredBoards.map((b) => (
-          <button
-            key={b.id}
-            type="button"
-            className={`board-card${b.id === boardId ? ' selected' : ''}`}
-            onClick={() => setBoardId(b.id)}
-          >
-            <div className="board-card-head">
-              <div className="board-card-name">{b.name}</div>
-              <div className="board-card-chip">{shortChip(b.chip)}</div>
-            </div>
-            <div className="board-card-caps">
-              {toCaps(b.tags).map((cap) => (
-                <span key={cap} className="cap">{cap}</span>
+      <div className="brand-filter" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {BRANDS.map((br) => (
+            <button
+              key={br.id}
+              type="button"
+              className={`brand-btn${brand === br.id ? ' active' : ''}`}
+              onClick={() => handleBrandChange(br.id)}
+            >
+              {br.label}
+            </button>
+          ))}
+        </div>
+        {versions.length > 0 ? (
+          <label className="version-picker">
+            <span>Firmware</span>
+            <select
+              value={version}
+              onChange={(e) => setVersion(e.target.value)}
+              className="version-select"
+            >
+              {versions.some((v) => v.version === latestVersion) ? null : (
+                <option value={latestVersion}>v{latestVersion} (latest)</option>
+              )}
+              {versions.map((v, i) => (
+                <option key={v.version} value={v.version}>
+                  v{v.version}{i === 0 ? ' (latest)' : ''}
+                </option>
               ))}
-            </div>
-          </button>
-        ))}
+            </select>
+          </label>
+        ) : null}
+      </div>
+      {isOldVersion && supportedIds ? (
+        <div className="version-note">
+          Showing {supportedCount} board{supportedCount === 1 ? '' : 's'} that shipped in v{version}. Boards added
+          in later releases are dimmed.
+        </div>
+      ) : null}
+      <div className="board-grid">
+        {filteredBoards.map((b) => {
+          const supported = isSupported(b.id);
+          return (
+            <button
+              key={b.id}
+              type="button"
+              disabled={!supported}
+              title={supported ? undefined : `Not available in v${version}`}
+              className={`board-card${b.id === boardId ? ' selected' : ''}${supported ? '' : ' unsupported'}`}
+              onClick={() => { if (supported) setBoardId(b.id); }}
+            >
+              <div className="board-card-head">
+                <div className="board-card-name">{b.name}</div>
+                <div className="board-card-chip">{shortChip(b.chip)}</div>
+              </div>
+              <div className="board-card-caps">
+                {toCaps(b.tags).map((cap) => (
+                  <span key={cap} className="cap">{cap}</span>
+                ))}
+              </div>
+              {!supported ? <div className="board-card-badge">not in v{version}</div> : null}
+            </button>
+          );
+        })}
       </div>
 
       <BoardInfo board={board} />
@@ -120,7 +185,14 @@ export default function InstallFlow({ boards }) {
         <div className="step-sub">Target verified · ready</div>
       </div>
 
-      <Flasher board={board} firmwareVersion={FIRMWARE_VERSION} method={method} methodInfo={methodInfo} />
+      <Flasher
+        board={board}
+        firmwareVersion={version}
+        method={method}
+        methodInfo={methodInfo}
+        binUrl={binUrl}
+        isOldVersion={isOldVersion}
+      />
     </>
   );
 }

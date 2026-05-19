@@ -54,7 +54,12 @@ Create a new firmware release. Usage: `/release <version>` (e.g. `/release 1.3.0
 
 9. **On approval**, execute in this exact order:
    - Create announcement file at `release-notes/<version>.md`
-   - Commit: `git add release-notes/<version>.md && git commit -m "📝 add release notes <version>"`
+    - Seed the board map from the workflow matrix so the new tag ships with its own row in `_boards.json`:
+     ```bash
+     node scripts/sync-releases.mjs --seed <version>
+     ```
+     This reads the `strategy.matrix.env` list from `.github/workflows/release.yml` (no network) and merges `"<version>": [...18 boards]` into `release-notes/_boards.json`. If the entry is already up-to-date, the script is a no-op.
+   - Commit both files: `git add release-notes/<version>.md release-notes/_boards.json && git commit -m "📝 add release notes <version>"`
    - Create annotated git tag on the new commit using a temp file: `git tag -a <version> -F /tmp/tag_msg_<version>.txt`
    - Push: `git push origin main && git push origin <version>`
 
@@ -114,6 +119,14 @@ Create a new firmware release. Usage: `/release <version>` (e.g. `/release 1.3.0
     ```
 
     The script's pre-flight verifies each `builds/unigeek-m5*.bin` actually contains the version string (NUL-terminated) before posting, so a forgotten `PLATFORMIO_BUILD_SRC_FLAGS` from step 3 will surface here as a hard error instead of a silent mis-labelled upload. Reads the `m5_token` from `.env` (header `m5_auth_token`); add it locally if missing — see `.env.sample`. Six entries are posted and **auto-published** (POST then PUT `/firmware/<fid>/publish/<bin_id>/1`): `UniGeek Cardputer`, `UniGeek Cardputer Adv`, `UniGeek CoreS3`, `UniGeek StickC Plus 1.1`, `UniGeek StickC Plus 2`, `UniGeek StickS3`. If any individual step fails, the script prints the failures and exits non-zero — the release itself is still good (GitHub release + tag are already up); retry with `python scripts/m5burner.py publish <version>` to flip just the still-unpublished ones, or re-run upload to retry both POST and publish.
+
+14. **Verify the release map**: Step 9 already seeded `_boards.json` from the workflow matrix (so the tag itself is correct). After the GitHub Actions release workflow finishes uploading every `.bin` (watch with `gh run watch --exit-status` or eyeball the Releases page), run the full sync once more — this time against the actual uploaded asset list — to catch any divergence (e.g. a matrix build failed silently and one bin is missing):
+
+    ```bash
+    node scripts/sync-releases.mjs
+    ```
+
+    `git diff release-notes/_boards.json` should be **empty** at this point. If it's not, a build failed — investigate the workflow logs before committing the diff. If everything matches, no follow-up commit is needed. Safe to re-run later if you forget; the sync is idempotent.
 
 ## Knowledge file conventions
 

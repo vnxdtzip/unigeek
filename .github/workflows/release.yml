@@ -80,13 +80,6 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Download firmware from release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p website/public/firmware
-          gh release download --repo ${{ github.repository }} --pattern "unigeek-*.bin" --dir website/public/firmware
-
       - name: Set up Node
         uses: actions/setup-node@v4
         with:

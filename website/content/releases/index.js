@@ -4,6 +4,19 @@ import { execSync } from "child_process";
 import { marked } from "marked";
 
 const releasesDir = path.join(process.cwd(), "..", "release-notes");
+const boardSupportFile = path.join(releasesDir, "_boards.json");
+
+// Load the per-version board support map produced by scripts/sync-releases.mjs.
+// Tolerated missing — the install page just won't filter the board grid until
+// someone runs the sync.
+function loadBoardSupport() {
+  try {
+    if (!fs.existsSync(boardSupportFile)) return {};
+    return JSON.parse(fs.readFileSync(boardSupportFile, "utf8"));
+  } catch {
+    return {};
+  }
+}
 
 // Map of version string → ISO date the tag was pushed. Populated lazily once
 // per build; git tags in the parent repo are the source of truth.
@@ -209,12 +222,18 @@ function readReleaseFile(filePath) {
 export function getAllReleases() {
   const files = fs.readdirSync(releasesDir).filter((f) => f.endsWith(".md"));
   const tagDates = getTagDates();
+  const support = loadBoardSupport();
 
   return files
     .map((filename) => {
       const version = filename.replace(".md", "");
       const data = readReleaseFile(path.join(releasesDir, filename));
-      return { version, date: tagDates[version] || null, ...data };
+      return {
+        version,
+        date: tagDates[version] || null,
+        boards: support[version] || null,
+        ...data,
+      };
     })
     .sort((a, b) => {
       const pa = a.version.split(".").map(Number);
@@ -228,4 +247,16 @@ export function getAllReleases() {
 
 export function getLatestRelease() {
   return getAllReleases()[0] || null;
+}
+
+export function getAllVersions() {
+  return getAllReleases().map((r) => ({
+    version: r.version,
+    date: r.date,
+    boards: r.boards,
+  }));
+}
+
+export function getBoardSupportMap() {
+  return loadBoardSupport();
 }
