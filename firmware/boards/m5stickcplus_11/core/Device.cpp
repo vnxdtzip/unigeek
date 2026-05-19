@@ -26,6 +26,8 @@ Device* Device::createInstance() {
   pinMode(BTN_A, INPUT_PULLUP);
   Wire1.begin(INTERNAL_SDA, INTERNAL_SCL);  // Wire1: AXP192 + BM8563 share same internal I2C bus
   Wire.begin(GROVE_SDA, GROVE_SCL);         // Wire: Grove I2C (ExI2C)
+  // Encoder HAT runs on a software-bit-banged bus (utils/M5HatMiniEncoderC_Soft.h)
+  // on GPIO 0/26 — independent of Wire/Wire1.
 
   // Grove port SPI — pins stored but NOT begun here.
   // GPIO 32/33 are shared with GPS UART2 (TX=32, RX=33).

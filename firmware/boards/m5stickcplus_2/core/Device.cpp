@@ -31,6 +31,8 @@ Device* Device::createInstance() {
   // Internal I2C for BM8563 RTC
   Wire1.begin(INTERNAL_SDA, INTERNAL_SCL);
   Wire.begin(GROVE_SDA, GROVE_SCL);          // Grove I2C (ExI2C)
+  // Encoder HAT runs on a software-bit-banged bus (utils/M5HatMiniEncoderC_Soft.h)
+  // on GPIO 0/26 — independent of Wire/Wire1.
 
   // PWM backlight
   display.initBacklight();
