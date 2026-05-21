@@ -362,12 +362,14 @@ void SubGHzScreen::onBack() {
     _rf.end();
     _showMenu();
   } else if (_state == STATE_SEND_BROWSE) {
-    if (_browsePath == kRootPath) {
+    // Climb to parent; exit to menu only when already at "/" or empty.
+    // Lets users browse out of /unigeek/rf into any directory on storage.
+    if (_browsePath == "/" || _browsePath.length() == 0) {
       _showMenu();
     } else {
       int slash = _browsePath.lastIndexOf('/');
-      if (slash > 0) _loadBrowseDir(_browsePath.substring(0, slash));
-      else _showMenu();
+      String parent = (slash > 0) ? _browsePath.substring(0, slash) : "/";
+      _loadBrowseDir(parent);
     }
   }
 }
@@ -807,6 +809,6 @@ void SubGHzScreen::_loadBrowseDir(const String& path) {
     Uni.Storage->makeDir(path.c_str());
   }
 
-  uint8_t n = _browser.load(this, path, ".sub");
+  uint8_t n = _browser.load(this, path, ".sub", nullptr, /*prependParent=*/true);
   setItems(_browser.items(), n);
 }

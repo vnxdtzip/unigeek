@@ -178,12 +178,13 @@ void KeyboardScreen::onItemSelected(uint8_t index)
 void KeyboardScreen::onBack()
 {
   if (_state == STATE_SELECT_FILE) {
-    int slash = _curPath.lastIndexOf('/');
-    if (slash > 0 && _curPath != kDuckyBase) {
-      _showFiles(_curPath.substring(0, slash));
-    } else {
+    if (_curPath == "/" || _curPath.length() == 0) {
       _goMenu();
+      return;
     }
+    int slash = _curPath.lastIndexOf('/');
+    String parent = (slash > 0) ? _curPath.substring(0, slash) : "/";
+    _showFiles(parent);
   } else {
     Screen.goBack();
   }
@@ -241,7 +242,7 @@ void KeyboardScreen::_showFiles(const String& path)
 
   _curPath = path;
   _state   = STATE_SELECT_FILE;
-  uint8_t n = _browser.load(this, path);
+  uint8_t n = _browser.load(this, path, BrowseFileView::Mode{}, nullptr, /*prependParent=*/true);
 
   if (n == 0) {
     ShowStatusAction::show("No files found", 1500);
