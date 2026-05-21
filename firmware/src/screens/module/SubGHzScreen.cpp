@@ -33,6 +33,17 @@ void SubGHzScreen::onInit() {
 }
 
 void SubGHzScreen::onUpdate() {
+  if (_state == STATE_SIGNAL_INFO) {
+    if (!Uni.Nav->wasPressed()) return;
+    auto dir = Uni.Nav->readDirection();
+    if (dir == INavigation::DIR_BACK || dir == INavigation::DIR_PRESS) {
+      onBack();
+      return;
+    }
+    if (_textView.onNav(dir) && Uni.Speaker) Uni.Speaker->beep();
+    return;
+  }
+
   if (_state == STATE_SCANNING) {
     if (Uni.Nav->wasPressed()) {
       auto dir = Uni.Nav->readDirection();
@@ -73,11 +84,57 @@ void SubGHzScreen::onUpdate() {
         _showReceiveList();
       }
     }
+
+    // Hold-PRESS (500 ms) toggles the filter — fallback for 2-way devices
+    // (sticks, T-Display, T-Embed, CYD touch) where LEFT/RIGHT aren't emitted.
+    if (!_holdFired && Uni.Nav->isPressed() &&
+        Uni.Nav->currentDirection() == INavigation::DIR_PRESS &&
+        Uni.Nav->heldDuration() >= 500) {
+      _holdFired = true;
+      _toggleRxFilter();
+      render();
+      return;
+    }
+    if (_holdFired) {
+      if (Uni.Nav->wasPressed()) {
+        Uni.Nav->readDirection();  // swallow the release so PRESS click doesn't fire
+        _holdFired = false;
+      }
+      return;
+    }
+
+    // Nav: RIGHT/LEFT toggles filter; UP/DOWN/PRESS/BACK navigate the captured list.
+    // We intercept here instead of falling through to ListScreen::onUpdate so we
+    // can claim LEFT/RIGHT for the filter toggle (Bruce-style live switch).
+    if (Uni.Nav->wasPressed()) {
+      auto dir = Uni.Nav->readDirection();
+      if (dir == INavigation::DIR_LEFT || dir == INavigation::DIR_RIGHT) {
+        _toggleRxFilter();
+        render();
+      } else if (dir == INavigation::DIR_BACK) {
+        onBack();
+      } else if (_capturedCount > 0) {
+        if (dir == INavigation::DIR_UP) {
+          _selectedIndex = (_selectedIndex == 0) ? _capturedCount - 1 : _selectedIndex - 1;
+          setCount(_capturedCount);
+          render();
+        } else if (dir == INavigation::DIR_DOWN) {
+          _selectedIndex = (_selectedIndex >= _capturedCount - 1) ? 0 : _selectedIndex + 1;
+          setCount(_capturedCount);
+          render();
+        } else if (dir == INavigation::DIR_PRESS) {
+          onItemSelected(_selectedIndex);
+        }
+      }
+      return;
+    }
+
     // Blink title indicator while still listening
     if (_capturedCount < kMaxCapture && millis() - _lastRender > 500) {
       _lastRender = millis();
       render();
     }
+    return;
   }
 
   if (_state == STATE_JAMMING) {
@@ -130,6 +187,11 @@ void SubGHzScreen::onUpdate() {
 }
 
 void SubGHzScreen::onRender() {
+  if (_state == STATE_SIGNAL_INFO) {
+    _textView.render(bodyX(), bodyY(), bodyW(), bodyH());
+    return;
+  }
+
   if (_state == STATE_RECEIVING) {
     if (_capturedCount == 0) {
       auto& lcd = Uni.Lcd;
@@ -145,11 +207,16 @@ void SubGHzScreen::onRender() {
       lcd.drawString("Waiting for signal...", bodyX() + bodyW() / 2, bodyY() + bodyH() / 2);
       lcd.fillRect(bodyX(), bodyY() + bodyH() - 16, bodyW(), 16, Config.getThemeColor());
       lcd.setTextColor(TFT_WHITE, Config.getThemeColor());
+      const char* filterLabel = (_rf.getRxFilter() == CC1101Util::RX_FILTER_CODE)
+                                ? "> Filter: Code" : "> Filter: RAW";
+      lcd.setTextDatum(ML_DATUM);
       #ifdef DEVICE_HAS_KEYBOARD
-        lcd.drawString("BACK: Stop", bodyX() + bodyW() / 2, bodyY() + bodyH() - 8);
+        lcd.drawString("BACK: Stop", bodyX() + 4, bodyY() + bodyH() - 8);
       #else
-        lcd.drawString("< Stop", bodyX() + bodyW() / 2, bodyY() + bodyH() - 8);
+        lcd.drawString("< Stop", bodyX() + 4, bodyY() + bodyH() - 8);
       #endif
+      lcd.setTextDatum(MR_DATUM);
+      lcd.drawString(filterLabel, bodyX() + bodyW() - 4, bodyY() + bodyH() - 8);
       _chromeDrawn = true;
     } else {
       ListScreen::onRender();
@@ -285,6 +352,21 @@ void SubGHzScreen::onRender() {
 }
 
 void SubGHzScreen::onBack() {
+  if (_state == STATE_SIGNAL_INFO) {
+    // Restore the list state then re-open the popup that summoned the info view.
+    uint8_t idx = _infoIdx;
+    if (_infoSource == INFO_FROM_CAPTURE) {
+      _state = STATE_RECEIVING;
+      _showReceiveList();
+      _handleCaptureSelection(idx);
+    } else {
+      // Browse: state is already STATE_SEND_BROWSE in spirit — repaint list, re-pop.
+      _state = STATE_SEND_BROWSE;
+      _loadBrowseDir(_browsePath);
+      _showBrowseOptions(idx);
+    }
+    return;
+  }
   if (_state == STATE_MENU) {
     _rf.end();
     Screen.goBack();
@@ -394,7 +476,7 @@ void SubGHzScreen::onItemSelected(uint8_t index) {
       _loadBrowseDir(_browser.entry(index).path);
       return;
     }
-    _sendBrowseFile(index);
+    _showBrowseTapOptions(index);
     return;
   }
 }
@@ -432,17 +514,44 @@ void SubGHzScreen::_sendBrowseFile(uint8_t index) {
   render();
 }
 
+void SubGHzScreen::_showBrowseTapOptions(uint8_t index) {
+  static constexpr InputSelectAction::Option tapOpts[] = {
+    {"Send", "send"},
+    {"Info", "info"},
+  };
+  const char* choice = InputSelectAction::popup("Options", tapOpts, 2, "send");
+  if (!choice) { render(); return; }
+
+  if (strcmp(choice, "send") == 0)      _sendBrowseFile(index);
+  else if (strcmp(choice, "info") == 0) _showBrowseFileInfo(index);
+}
+
+void SubGHzScreen::_showBrowseFileInfo(uint8_t index) {
+  String content = Uni.Storage->readFile(_browser.entry(index).path.c_str());
+  CC1101Util::Signal sig;
+  if (!CC1101Util::loadFile(content, sig)) {
+    ShowStatusAction::show("Invalid .sub file");
+    render();
+    return;
+  }
+  _showSignalInfo(sig, INFO_FROM_BROWSE, index);
+}
+
 void SubGHzScreen::_showBrowseOptions(uint8_t index) {
   static constexpr InputSelectAction::Option fileOpts[] = {
     {"Send",   "send"},
+    {"Info",   "info"},
     {"Rename", "rename"},
     {"Delete", "delete"},
   };
-  const char* choice = InputSelectAction::popup("Options", fileOpts, 3, "send");
+  const char* choice = InputSelectAction::popup("Options", fileOpts, 4, "send");
   if (!choice) { render(); return; }
 
   if (strcmp(choice, "send") == 0) {
     _sendBrowseFile(index);
+
+  } else if (strcmp(choice, "info") == 0) {
+    _showBrowseFileInfo(index);
 
   } else if (strcmp(choice, "rename") == 0) {
     String curName = _browser.entry(index).name;
@@ -507,6 +616,15 @@ void SubGHzScreen::_startScan() {
   render();
 }
 
+void SubGHzScreen::_toggleRxFilter() {
+  auto cur = _rf.getRxFilter();
+  _rf.setRxFilter(cur == CC1101Util::RX_FILTER_CODE
+                  ? CC1101Util::RX_FILTER_RAW
+                  : CC1101Util::RX_FILTER_CODE);
+  _chromeDrawn = false;  // redraw waiting-screen footer with new label
+  if (Uni.Speaker) Uni.Speaker->beep();
+}
+
 void SubGHzScreen::_selectFrequency() {
   static constexpr InputSelectAction::Option freqOpts[] = {
     {"300 MHz",    "300"},
@@ -555,12 +673,18 @@ void SubGHzScreen::_handleCaptureSelection(uint8_t index) {
   if (index >= _capturedCount) return;
 
   static constexpr InputSelectAction::Option captureOpts[] = {
+    {"Info",   "info"},
     {"Replay", "replay"},
     {"Save",   "save"},
     {"Delete", "delete"},
   };
-  const char* choice = InputSelectAction::popup("Options", captureOpts, 3);
+  const char* choice = InputSelectAction::popup("Options", captureOpts, 4);
   if (!choice) { render(); return; }
+
+  if (strcmp(choice, "info") == 0) {
+    _showSignalInfo(_capturedSignals[index], INFO_FROM_CAPTURE, index);
+    return;
+  }
 
   if (strcmp(choice, "replay") == 0) {
     _sendCapturedSignal(index);
@@ -586,6 +710,15 @@ void SubGHzScreen::_handleCaptureSelection(uint8_t index) {
     _capturedCount--;
     _showReceiveList();
   }
+}
+
+void SubGHzScreen::_showSignalInfo(const CC1101Util::Signal& sig, InfoSource src, uint8_t idx) {
+  _infoSource = src;
+  _infoIdx    = idx;
+  strcpy(_titleBuf, "Signal Info");
+  _state = STATE_SIGNAL_INFO;
+  _textView.setContent(CC1101Util::signalInfoText(sig));
+  render();
 }
 
 void SubGHzScreen::_rebuildCapturedItems() {

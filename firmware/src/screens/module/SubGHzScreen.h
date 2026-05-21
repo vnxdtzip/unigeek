@@ -6,6 +6,7 @@
 
 #include "ui/templates/ListScreen.h"
 #include "ui/views/BrowseFileView.h"
+#include "ui/views/TextScrollView.h"
 #include "utils/rf/CC1101Util.h"
 
 class SubGHzScreen : public ListScreen {
@@ -27,7 +28,14 @@ private:
     STATE_SEND_BROWSE,
     STATE_JAMMING,
     STATE_SCANNING,
+    STATE_SIGNAL_INFO,  // scrollable info view; back returns to popup
   } _state = STATE_MENU;
+
+  enum InfoSource { INFO_FROM_CAPTURE, INFO_FROM_BROWSE };
+  TextScrollView _textView;
+  InfoSource     _infoSource = INFO_FROM_CAPTURE;
+  uint8_t        _infoIdx    = 0;
+  void _showSignalInfo(const CC1101Util::Signal& sig, InfoSource src, uint8_t idx);
 
   CC1101Util _rf;
   int8_t _csPin   = -1;
@@ -48,6 +56,7 @@ private:
   void _showMenu();
   void _updateSublabels();
   void _selectFrequency();
+  void _toggleRxFilter();
   void _startScan();
 
   // Receive — captured signal buffer
@@ -81,7 +90,9 @@ private:
   uint8_t _pendingHoldIdx = 0;
   void _loadBrowseDir(const String& path);
   void _sendBrowseFile(uint8_t index);
-  void _showBrowseOptions(uint8_t index);
+  void _showBrowseTapOptions(uint8_t index);   // Send / Info (on tap)
+  void _showBrowseOptions(uint8_t index);      // Send / Info / Rename / Delete (on hold)
+  void _showBrowseFileInfo(uint8_t index);     // parses .sub, opens info view
   String _makeUniquePath(const String& name);
 };
 
