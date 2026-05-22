@@ -106,6 +106,20 @@ private:
   unsigned long _discoveryDwellMs = 1000;    // ms per channel during discovery scan
   unsigned long _attackDwellMs    = 8000;  // ms to stay on channel after deauth
 
+  // ── Menu action ids (shared by _showMenu builder and onItemSelected dispatch) ─
+  enum ActionId : uint8_t {
+    ACT_MODE = 0,
+    ACT_TARGET_WIFI,
+    ACT_DISCOVERY_DWELL,
+    ACT_ATTACK_DWELL,
+    ACT_MAX_DEAUTH,
+    ACT_START,
+  };
+
+  // Sentinel for _chanDwellUntil meaning "do not fire any more deauths"
+  // (Target mode after handshake captured or timeout reached).
+  static constexpr unsigned long kStopFiring = ULONG_MAX;
+
   // ── Mode (single AP vs every visible AP) ─────────────────────────────────
   enum Mode { MODE_TARGET, MODE_ALL };
   Mode  _mode = MODE_TARGET;

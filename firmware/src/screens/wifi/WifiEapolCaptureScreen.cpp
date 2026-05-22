@@ -116,10 +116,6 @@ void WifiEapolCaptureScreen::onInit() {
 }
 
 void WifiEapolCaptureScreen::_showMenu() {
-  // Action ids used to keep onItemSelected mode-agnostic.
-  enum { ACT_MODE = 0, ACT_TARGET_WIFI, ACT_DISCOVERY_DWELL, ACT_ATTACK_DWELL,
-         ACT_MAX_DEAUTH, ACT_START };
-
   _modeSub      = (_mode == MODE_TARGET) ? "Target" : "All";
   _targetSub    = _target.ssid;
   _discoverySub = String(_discoveryDwellMs) + " ms";
@@ -163,8 +159,6 @@ void WifiEapolCaptureScreen::onItemSelected(uint8_t index) {
   if (_phase != PHASE_MENU) return;
 
   if (index >= _menuCount) return;
-  enum { ACT_MODE = 0, ACT_TARGET_WIFI, ACT_DISCOVERY_DWELL, ACT_ATTACK_DWELL,
-         ACT_MAX_DEAUTH, ACT_START };
   switch (_menuMap[index]) {
     case ACT_MODE:
       _mode = (_mode == MODE_TARGET) ? MODE_ALL : MODE_TARGET;
@@ -186,13 +180,12 @@ void WifiEapolCaptureScreen::onItemSelected(uint8_t index) {
       _showMenu();
       break;
     case ACT_START: {
-      if (_mode == MODE_TARGET) {
-        bool unset = (_target.ssid == "-" || _target.channel == 0);
-        uint8_t blank[6] = {0};
-        if (unset && memcmp(_target.bssid, blank, 6) == 0) {
-          ShowStatusAction::show("Select a Target WiFi first!");
-          return;
-        }
+      // Target mode requires a picked AP — _target.channel only goes non-zero
+      // once _selectWifi() lands an `[ch] ssid` result, so it's the canonical
+      // "no target set" indicator.
+      if (_mode == MODE_TARGET && _target.channel == 0) {
+        ShowStatusAction::show("Select a Target WiFi first!");
+        return;
       }
 
       // Start capture
@@ -385,7 +378,7 @@ void WifiEapolCaptureScreen::onUpdate() {
             _phase = PHASE_ATTACK;  // keep state, but no more channels to attack
             _attackChanIdx   = 0;
             _attackChanCount = 0;
-            _chanDwellUntil  = ULONG_MAX;  // never re-fire
+            _chanDwellUntil  = kStopFiring;
             _deauthFired     = true;
             return;
           }

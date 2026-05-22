@@ -15,7 +15,7 @@ export const CATALOG = [
   // WiFi
   { slug: "evil-twin",            title: "Evil Twin",           category: "wifi",     summary: "Clone a target AP's SSID with a captive portal; optional deauth and real-time password verification",  hasDetail: true,  stable: true },
   { slug: "access-point",         title: "Access Point",        category: "wifi",     summary: "Custom hotspot with optional DNS spoofing, captive portal, web file manager, and WiFi QR code",        hasDetail: true,  stable: true },
-  { slug: "eapol",                title: "EAPOL Capture",       category: "wifi",     summary: "Capture WPA2 handshakes from nearby networks and crack passwords offline with a wordlist",             hasDetail: true,  stable: true },
+  { slug: "eapol",                title: "EAPOL Capture",       category: "wifi",     summary: "Capture WPA2 handshakes — pick one target AP from a 10 s scan or sweep every visible AP on all 13 channels; crack passwords offline with a wordlist", hasDetail: true,  stable: true },
   { slug: "karma-captive",        title: "Karma Captive",       category: "wifi",     summary: "Lure devices with a fake open AP matching their saved SSID and capture credentials via captive portal",  hasDetail: true,  stable: true },
   { slug: "karma-eapol",         title: "Karma EAPOL",         category: "wifi",     summary: "Capture WPA2 handshakes via fake AP deployed on a paired Karma Support device; M1+M2 saved for offline cracking", hasDetail: true,  stable: true },
   { slug: "karma-detector",      title: "Karma Detector",      category: "wifi",     summary: "Detect rogue APs responding to probes by broadcasting fake probe requests across channels and monitoring responses", hasDetail: true,  stable: true },
