@@ -15,6 +15,7 @@ Multi-tool firmware for ESP32-based handheld devices. Built with PlatformIO + Ar
 | M5Stack Cardputer ADV | TCA8418 | I2S + ES8311 | Yes | Yes | — |
 | LilyGO T-Display | 2 Buttons | — | — | — | — |
 | LilyGO T-Display S3 | 2 Buttons | — | Yes | — | — |
+| LilyGO T-Display S3 Touch | 2 Buttons + Touch (CST820) | — | Yes | — | — |
 | LilyGO T-Embed CC1101 | Rotary Encoder | I2S | — | Yes | — |
 | M5Stack CoreS3 (Unified) | Touch | I2S | Yes | Yes | — |
 | M5Stick S3 | 2 Buttons | I2S | Yes | — | — |

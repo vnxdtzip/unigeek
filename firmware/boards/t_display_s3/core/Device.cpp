@@ -2,6 +2,7 @@
 #include "core/Display.h"
 #include "core/Navigation.h"
 #include "core/Power.h"
+#include <Wire.h>
 
 static DisplayImpl displayImpl;
 static PowerImpl powerImpl;
@@ -15,7 +16,14 @@ Device* Device::createInstance() {
     ledcAttachPin(LCD_BL, LCD_BL_CH);
     ledcWrite(LCD_BL_CH, 255);
 
-    return new Device(displayImpl, powerImpl, &navImpl);
+    // I2C bus on the touch variant carries both the on-board CST820 touch IC
+    // and any Grove peripheral on pins 18/17 — same bus, treated as ExI2C
+    // (free, retargetable) for module compatibility.
+    Wire.begin(SDA, SCL);
+
+    auto* dev = new Device(displayImpl, powerImpl, &navImpl);
+    dev->ExI2C = &Wire;
+    return dev;
 }
 
 void Device::boardHook() {
