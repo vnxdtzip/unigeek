@@ -145,6 +145,14 @@ void HIDKeyboardUtil::mouseClick(uint8_t buttons)
   sendMouseReport(&up);
 }
 
+void HIDKeyboardUtil::consumerKey(uint16_t code)
+{
+  sendConsumerReport(code);
+  delay(_delayMs);
+  sendConsumerReport(0);
+  delay(_delayMs);
+}
+
 void HIDKeyboardUtil::reportModifier(KeyReport* report, uint8_t k)
 {
   if (k >= HID_OFFSET) {
