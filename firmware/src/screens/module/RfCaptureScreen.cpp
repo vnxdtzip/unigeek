@@ -444,6 +444,10 @@ void RfCaptureScreen::_loadBrowseDir(const String& path) {
     Uni.Storage->makeDir(path.c_str());
   }
 
+  // _browser.root confines the picker to kRootPath — ".." appears below
+  // the root but never resolves above it. BACK still works the same; this
+  // is just the in-list alternative.
+  _browser.root = kRootPath;
   uint8_t n = _browser.load(this, path, ".sub");
   setItems(_browser.items(), n);
 }

@@ -8,6 +8,9 @@
 
 void LuaScreen::_loadDir(const String& path) {
   _currentDir = path;
+  // _browser.root confines the picker to ROOT_DIR — ".." appears below but
+  // never resolves above /unigeek/lua.
+  _browser.root = ROOT_DIR;
   _browser.load(this, path, ".lua");
   setItems(_browser.items(), _browser.count());
 }
@@ -61,13 +64,13 @@ void LuaScreen::onRender() {
 
 void LuaScreen::onBack() {
   if (_state != STATE_BROWSE) return;
-  if (_currentDir == ROOT_DIR) {
+  // Clamp at ROOT_DIR — never climb above /unigeek/lua.
+  if (_currentDir == ROOT_DIR || _currentDir.length() == 0) {
     Screen.goBack();
     return;
   }
   int slash = _currentDir.lastIndexOf('/');
   String parent = (slash > 0) ? _currentDir.substring(0, slash) : ROOT_DIR;
-  if (parent.length() == 0) parent = ROOT_DIR;
   _loadDir(parent);
 }
 

@@ -187,12 +187,15 @@ void KeyboardScreen::onItemSelected(uint8_t index)
 void KeyboardScreen::onBack()
 {
   if (_state == STATE_SELECT_FILE) {
-    int slash = _curPath.lastIndexOf('/');
-    if (slash > 0 && _curPath != kDuckyBase) {
-      _showFiles(_curPath.substring(0, slash));
-    } else {
+    // Clamp at kDuckyBase — don't let the picker climb above /unigeek/hid/duckyscript
+    // into the rest of the SD card.
+    if (_curPath == kDuckyBase || _curPath.length() == 0) {
       _goMenu();
+      return;
     }
+    int slash = _curPath.lastIndexOf('/');
+    String parent = (slash > 0) ? _curPath.substring(0, slash) : kDuckyBase;
+    _showFiles(parent);
   } else if (_state == STATE_MEDIA_MENU) {
     _goMenu();
   } else {
@@ -253,6 +256,9 @@ void KeyboardScreen::_showFiles(const String& path)
 
   _curPath = path;
   _state   = STATE_SELECT_FILE;
+  // ".." only below the screen's root — _browser.root clamps the parent
+  // entry so the picker can never escape /unigeek/hid/duckyscript.
+  _browser.root = kDuckyBase;
   uint8_t n = _browser.load(this, path);
 
   if (n == 0) {

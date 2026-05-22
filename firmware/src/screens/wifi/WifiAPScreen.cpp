@@ -176,20 +176,18 @@ void WifiAPScreen::onItemSelected(uint8_t index)
           render();
           break;
         }
-        IStorage::DirEntry entries[20];
-        uint8_t count = Uni.Storage->listDir(PORTALS_DIR, entries, 20);
-        // Filter to directories only
-        InputSelectAction::Option opts[10];
-        int optCount = 0;
-        for (uint8_t i = 0; i < count && optCount < 10; i++) {
-          if (!entries[i].isDir) continue;
-          opts[optCount] = {entries[i].name.c_str(), entries[i].name.c_str()};
-          optCount++;
-        }
-        if (optCount == 0) {
+        // BrowseFileView in DIRECTORY mode — sorts folders alphabetically.
+        uint8_t n = _browser.load(this, PORTALS_DIR, BrowseFileView::Mode::DIRECTORY);
+        if (n == 0) {
           ShowStatusAction::show("No portal folders found", 1500);
           render();
           break;
+        }
+        static constexpr uint8_t kMaxOpts = 10;
+        uint8_t optCount = (n < kMaxOpts) ? n : kMaxOpts;
+        InputSelectAction::Option opts[kMaxOpts];
+        for (uint8_t i = 0; i < optCount; i++) {
+          opts[i] = { _browser.entry(i).name.c_str(), _browser.entry(i).name.c_str() };
         }
         const char* selected = InputSelectAction::popup("Captive Portal", opts, optCount);
         render();

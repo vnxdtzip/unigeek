@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ui/templates/ListScreen.h"
+#include "ui/views/BrowseFileView.h"
 #include "ui/views/LogView.h"
 #include "utils/network/DnsSpoofServer.h"
 
@@ -35,6 +36,7 @@ private:
 
   ListItem _menuItems[7];
 
+  BrowseFileView _browser;     // captive-portal folder picker
   DnsSpoofServer _dnsSpoofServer;
 
   // Log view
