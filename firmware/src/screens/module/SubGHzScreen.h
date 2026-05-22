@@ -43,21 +43,24 @@ private:
   char _titleBuf[32] = "Sub-GHz";
   bool _chromeDrawn = false;  // partial-redraw: static body painted once per state
 
-  // Menu (5 items)
-  static constexpr uint8_t kMenuCount = 5;
+  // Menu (6 items — last row = mfcodes keystore status, tap reloads)
+  static constexpr uint8_t kMenuCount = 6;
   ListItem _menuItems[kMenuCount] = {
     {"Frequency"},
     {"Detect Freq"},
     {"Receive"},
     {"Send"},
     {"Jammer"},
+    {"Mfcodes"},
   };
   String _freqSub;
+  String _mfcodesSub;
   void _showMenu();
   void _updateSublabels();
   void _selectFrequency();
   void _toggleRxFilter();
   void _startScan();
+  void _reloadMfcodes();
 
   // Receive — captured signal buffer
   static constexpr uint8_t kMaxCapture = 15;
@@ -72,6 +75,7 @@ private:
   void _handleCaptureSelection(uint8_t index);  // replay/save/delete popup
   void _rebuildCapturedItems();
   void _sendCapturedSignal(uint8_t index);
+  void _replayStepKeeloqSignal(uint8_t index);  // KeeLoq decoded → counter+1 + re-encrypt
   void _saveSignal(uint8_t index, const String& name);
   bool _isDuplicate(const CC1101Util::Signal& sig) const;
   String _generateTimestampName();

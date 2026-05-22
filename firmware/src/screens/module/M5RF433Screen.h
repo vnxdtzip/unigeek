@@ -42,14 +42,18 @@ private:
   char _titleBuf[32] = "M5 RF433";
   bool _chromeDrawn = false;
 
-  // Menu — Receive / Send / Jammer
-  static constexpr uint8_t kMenuCount = 3;
+  // Menu — Receive / Send / Jammer / Mfcodes
+  static constexpr uint8_t kMenuCount = 4;
   ListItem _menuItems[kMenuCount] = {
     {"Receive"},
     {"Send"},
     {"Jammer"},
+    {"Mfcodes"},
   };
+  String _mfcodesSub;
   void _showMenu();
+  void _updateMfcodesSub();
+  void _reloadMfcodes();
   void _toggleRxFilter();
 
   // Receive — captured signal buffer
@@ -65,6 +69,7 @@ private:
   void _handleCaptureSelection(uint8_t index);
   void _rebuildCapturedItems();
   void _sendCapturedSignal(uint8_t index);
+  void _replayStepKeeloqSignal(uint8_t index);  // KeeLoq decoded → counter+1 + re-encrypt
   void _saveSignal(uint8_t index, const String& name);
   bool _isDuplicate(const M5RF433Util::Signal& sig) const;
   String _generateTimestampName();

@@ -9,6 +9,8 @@
 #include "ui/actions/InputSelectAction.h"
 #include "ui/actions/ShowStatusAction.h"
 #include "ui/views/ProgressView.h"
+#include "utils/rf/KeeloqKeystore.h"
+#include "utils/rf/KeeloqUtil.h"
 
 void SubGHzScreen::onInit() {
   _csPin   = PinConfig.get(PIN_CONFIG_CC1101_CS,   PIN_CONFIG_CC1101_CS_DEFAULT).toInt();
@@ -414,6 +416,10 @@ void SubGHzScreen::onItemSelected(uint8_t index) {
         _loadBrowseDir(kRootPath);
         break;
       }
+      case 5: { // Mfcodes — reload + status popup
+        _reloadMfcodes();
+        return;
+      }
       case 4: { // Jammer
         if (_csPin < 0 || _gdo0Pin < 0) {
           ShowStatusAction::show("Set CS and GDO0 pins first");
@@ -565,6 +571,30 @@ void SubGHzScreen::_updateSublabels() {
   snprintf(buf, sizeof(buf), "%.2f MHz", _rf.getFrequency());
   _freqSub = buf;
   _menuItems[0].sublabel = _freqSub.c_str();
+
+  // Mfcodes status — lazy-loads /unigeek/mfcodes on first call.
+  auto& store = KeeloqKeystore::instance();
+  if (store.isLoaded()) {
+    _mfcodesSub = String((unsigned)store.count()) + " keys";
+  } else {
+    _mfcodesSub = "not loaded";
+  }
+  _menuItems[5].sublabel = _mfcodesSub.c_str();
+}
+
+void SubGHzScreen::_reloadMfcodes() {
+  auto& store = KeeloqKeystore::instance();
+  store.reload();
+  char msg[80];
+  if (store.count() > 0) {
+    snprintf(msg, sizeof(msg), "Loaded %u keys from %s",
+             (unsigned)store.count(), KeeloqKeystore::PATH);
+  } else {
+    snprintf(msg, sizeof(msg), "No keys at %s", KeeloqKeystore::PATH);
+  }
+  ShowStatusAction::show(msg, 2500);
+  _updateSublabels();
+  render();
 }
 
 void SubGHzScreen::_startScan() {
@@ -642,13 +672,23 @@ void SubGHzScreen::_showReceiveList() {
 void SubGHzScreen::_handleCaptureSelection(uint8_t index) {
   if (index >= _capturedCount) return;
 
-  static constexpr InputSelectAction::Option captureOpts[] = {
+  // Show "Replay +1" only when KeeLoq decoded AND the manufacturer key still
+  // lives in the keystore (step() would no-op otherwise — silent failure is
+  // worse than hiding the option).
+  const CC1101Util::Signal& sig = _capturedSignals[index];
+  bool keeloqStep = (sig.protocol == "RcSwitch" && sig.preset == "23" &&
+                    sig.mf_name.length() > 0);
+
+  InputSelectAction::Option captureOpts[5] = {
     {"Info",   "info"},
     {"Replay", "replay"},
-    {"Save",   "save"},
-    {"Delete", "delete"},
   };
-  const char* choice = InputSelectAction::popup("Options", captureOpts, 4);
+  uint8_t optCount = 2;
+  if (keeloqStep) captureOpts[optCount++] = {"Replay +1", "replay_step"};
+  captureOpts[optCount++] = {"Save",   "save"};
+  captureOpts[optCount++] = {"Delete", "delete"};
+
+  const char* choice = InputSelectAction::popup("Options", captureOpts, optCount);
   if (!choice) { render(); return; }
 
   if (strcmp(choice, "info") == 0) {
@@ -656,7 +696,10 @@ void SubGHzScreen::_handleCaptureSelection(uint8_t index) {
     return;
   }
 
-  if (strcmp(choice, "replay") == 0) {
+  if (strcmp(choice, "replay_step") == 0) {
+    _replayStepKeeloqSignal(index);
+
+  } else if (strcmp(choice, "replay") == 0) {
     _sendCapturedSignal(index);
 
   } else if (strcmp(choice, "save") == 0) {
@@ -696,6 +739,12 @@ void SubGHzScreen::_rebuildCapturedItems() {
     const CC1101Util::Signal& sig = _capturedSignals[i];
     if (_capturedSaved[i]) {
       _capturedSubLabels[i] = "Saved";
+    } else if (sig.protocol == "RcSwitch" && sig.preset == "23" && sig.mf_name.length() > 0) {
+      // KeeLoq with manufacturer identified — counter visible so the user sees
+      // step+1 advance the displayed value on each replay.
+      char buf[40];
+      snprintf(buf, sizeof(buf), "%s cnt=%u", sig.mf_name.c_str(), sig.cnt);
+      _capturedSubLabels[i] = buf;
     } else if (sig.protocol == "RcSwitch") {
       char buf[32];
       snprintf(buf, sizeof(buf), "0x%llX P%s %db",
@@ -735,6 +784,38 @@ void SubGHzScreen::_sendCapturedSignal(uint8_t index) {
     if (n == 1) Achievement.unlock("rf_send_first");
   }
   ShowStatusAction::show("Replayed", 1000);
+  render();
+}
+
+void SubGHzScreen::_replayStepKeeloqSignal(uint8_t index) {
+  if (index >= _capturedCount) return;
+  if (_csPin < 0) {
+    ShowStatusAction::show("Set CS pin first");
+    render();
+    return;
+  }
+
+  CC1101Util::Signal& sig = _capturedSignals[index];
+  if (!KeeloqUtil::step(sig)) {
+    ShowStatusAction::show("Manufacturer key missing");
+    render();
+    return;
+  }
+
+  _rf.endReceive();
+  ProgressView::init();
+  char buf[48];
+  snprintf(buf, sizeof(buf), "Replay %s cnt=%u", sig.mf_name.c_str(), sig.cnt);
+  ProgressView::progress(buf, 50);
+  _rf.sendSignal(sig);
+  _rebuildCapturedItems();
+
+  int nk = Achievement.inc("rf_keeloq_step_replay");
+  if (nk == 1) Achievement.unlock("rf_keeloq_step_replay");
+  int n = Achievement.inc("rf_send_first");
+  if (n == 1) Achievement.unlock("rf_send_first");
+
+  ShowStatusAction::show("Replayed +1", 1000);
   render();
 }
 
