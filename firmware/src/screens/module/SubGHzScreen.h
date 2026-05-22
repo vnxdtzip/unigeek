@@ -1,49 +1,55 @@
 //
-// Sub-GHz (CC1101) Screen
+// Sub-GHz (CC1101) Screen — builds on RfCaptureScreen and adds the SubGHz-only
+// pieces: 5-item menu (Frequency, Detect Freq, Receive, Send, Jammer),
+// frequency selection popup, and the STATE_SCANNING frequency-sweep view.
 //
 
 #pragma once
 
-#include "ui/templates/ListScreen.h"
-#include "ui/views/BrowseFileView.h"
-#include "ui/views/TextScrollView.h"
+#include "screens/module/RfCaptureScreen.h"
 #include "utils/rf/CC1101Util.h"
 
-class SubGHzScreen : public ListScreen {
+class SubGHzScreen : public RfCaptureScreen {
 public:
-  const char* title() override { return _titleBuf; }
-  bool inhibitPowerSave() override { return _state == STATE_RECEIVING || _state == STATE_SCANNING; }
-  bool inhibitPowerOff() override { return _state == STATE_RECEIVING || _state == STATE_JAMMING || _state == STATE_SCANNING; }
-
   void onInit() override;
-  void onUpdate() override;
-  void onRender() override;
-  void onBack() override;
-  void onItemSelected(uint8_t index) override;
+
+protected:
+  // Extra state: frequency-sweep view.
+  static constexpr int STATE_SCANNING = STATE_USER_BASE + 0;
+
+  // ── Radio adapter ──────────────────────────────────────────────────────
+  bool        _radioBeginReceive()                override { return _rf.beginReceive(); }
+  void        _radioEndReceive()                  override { _rf.endReceive(); }
+  bool        _radioPollReceive(Signal& out)      override { return _rf.pollReceive(out); }
+  bool        _radioSendFromBrowse(const Signal& sig) override;
+  void        _radioSendCaptured(const Signal& sig)   override;
+  bool        _radioStartJam()                    override;
+  void        _radioStopJam()                     override;
+  void        _radioJamBurst()                    override;
+  RxFilter    _radioGetRxFilter()                 override { return _rf.getRxFilter(); }
+  void        _radioSetRxFilter(RxFilter f)       override { _rf.setRxFilter(f); }
+  void        _radioFreqLabel(char* buf, size_t n) override {
+    snprintf(buf, n, "%.2f MHz", _rf.getFrequency());
+  }
+  void        _radioShutdown()                    override { _rf.end(); }
+  const char* _titlePrefix()                      override { return "Sub-GHz"; }
+
+  void _showMenu()                          override;
+  void _onMenuSelected(uint8_t index)       override;
+
+  // ── Extension hooks for STATE_SCANNING ─────────────────────────────────
+  bool _onUpdateExtra()             override;
+  bool _onRenderExtra()             override;
+  bool _onBackExtra()               override;
+  bool _inhibitExtra() const        override { return _state == STATE_SCANNING; }
 
 private:
-  enum State {
-    STATE_MENU,
-    STATE_RECEIVING,
-    STATE_SEND_BROWSE,
-    STATE_JAMMING,
-    STATE_SCANNING,
-    STATE_SIGNAL_INFO,  // scrollable info view; back returns to popup
-  } _state = STATE_MENU;
-
-  enum InfoSource { INFO_FROM_CAPTURE, INFO_FROM_BROWSE };
-  TextScrollView _textView;
-  InfoSource     _infoSource = INFO_FROM_CAPTURE;
-  uint8_t        _infoIdx    = 0;
-  void _showSignalInfo(const CC1101Util::Signal& sig, InfoSource src, uint8_t idx);
-
   CC1101Util _rf;
   int8_t _csPin   = -1;
   int8_t _gdo0Pin = -1;
-  char _titleBuf[32] = "Sub-GHz";
-  bool _chromeDrawn = false;  // partial-redraw: static body painted once per state
+  bool   _rfDetectFired = false;  // achievement guard, resets each scan session
 
-  // Menu (5 items)
+  // Menu (5 items: Frequency | Detect Freq | Receive | Send | Jammer)
   static constexpr uint8_t kMenuCount = 5;
   ListItem _menuItems[kMenuCount] = {
     {"Frequency"},
@@ -53,44 +59,7 @@ private:
     {"Jammer"},
   };
   String _freqSub;
-  void _showMenu();
   void _updateSublabels();
   void _selectFrequency();
-  void _toggleRxFilter();
   void _startScan();
-
-  // Receive — captured signal buffer
-  static constexpr uint8_t kMaxCapture = 15;
-  CC1101Util::Signal _capturedSignals[kMaxCapture];
-  String _capturedTimes[kMaxCapture];
-  bool   _capturedSaved[kMaxCapture];
-  String _capturedSubLabels[kMaxCapture];
-  ListItem _capturedItems[kMaxCapture];
-  uint8_t _capturedCount = 0;
-  uint32_t _lastRender   = 0;     // for blink indicator while waiting
-  void _showReceiveList();        // rebuild items + setItems
-  void _handleCaptureSelection(uint8_t index);  // replay/save/delete popup
-  void _rebuildCapturedItems();
-  void _sendCapturedSignal(uint8_t index);
-  void _saveSignal(uint8_t index, const String& name);
-  bool _isDuplicate(const CC1101Util::Signal& sig) const;
-  String _generateTimestampName();
-
-  // Jammer state
-  uint32_t _jamStart       = 0;
-
-  // achievement guard — resets each scan session
-  bool     _rfDetectFired  = false;
-
-  // Send — file browser
-  static constexpr const char* kRootPath = "/unigeek/rf";
-  String _browsePath;
-  BrowseFileView _browser;
-  bool _holdFired = false;
-  void _loadBrowseDir(const String& path);
-  void _sendBrowseFile(uint8_t index);
-  void _showBrowseOptions(uint8_t index);    // Send / Info / Rename / Delete
-  void _showBrowseFileInfo(uint8_t index);   // parses .sub, opens info view
-  String _makeUniquePath(const String& name);
 };
-
