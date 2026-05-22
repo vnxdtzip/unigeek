@@ -102,12 +102,8 @@ private:
   BrowseFileView _browser;
   String         _dictPickDir;     // current dir in the dict picker
 
-  // Dump image and load file picker
+  // Dump image and load file picker — _browser reused for the dump list.
   static constexpr const char* _dumpPath = "/unigeek/nfc/dumps";
-  static constexpr uint8_t MAX_DUMP_FILES = 16;
-  ListItem _dumpItems[MAX_DUMP_FILES];
-  String   _dumpFileNames[MAX_DUMP_FILES];
-  uint8_t  _dumpFileCount = 0;
   uint8_t  _dumpImg[1024];
   bool     _hasDump = false;
 

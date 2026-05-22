@@ -138,12 +138,12 @@ void MFRC522Screen::onBack() {
     _mf1AuthKeys.fill({});
     _goMainMenu();
   } else if (_state == STATE_DICT_SELECT) {
-    if (_dictPickDir == "/" || _dictPickDir.length() == 0) {
+    if (_dictPickDir == _dictPath || _dictPickDir.length() == 0) {
       _dictPickDir = "";
       _goMifareClassic();
     } else {
       int slash = _dictPickDir.lastIndexOf('/');
-      _dictPickDir = (slash > 0) ? _dictPickDir.substring(0, slash) : "/";
+      _dictPickDir = (slash > 0) ? _dictPickDir.substring(0, slash) : _dictPath;
       _callDictionaryAttack();
     }
   } else if (_state == STATE_SHOW_KEY || _state == STATE_MEMORY_READER || _state == STATE_NESTED || _state == STATE_STATIC_NESTED) {
@@ -633,7 +633,8 @@ void MFRC522Screen::_callMemoryReader() {
 void MFRC522Screen::_callDictionaryAttack() {
   _state = STATE_DICT_SELECT;
   if (_dictPickDir.length() == 0) _dictPickDir = _dictPath;
-  uint8_t n = _browser.load(this, _dictPickDir, ".txt", nullptr, /*prependParent=*/true);
+  _browser.root = _dictPath;
+  uint8_t n = _browser.load(this, _dictPickDir, ".txt");
   if (n == 0 && _dictPickDir == _dictPath) {
     ShowStatusAction::show("No dictionary files in nfc/dictionaries/");
     _goMifareClassic();

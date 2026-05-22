@@ -405,7 +405,8 @@ void ChameleonMfcScreen::_callDump() {
 
 void ChameleonMfcScreen::_loadDictPicker() {
   if (_dictPickDir.length() == 0) _dictPickDir = _kDictDir;
-  uint8_t n = _browser.load(this, _dictPickDir, ".txt", nullptr, /*prependParent=*/true);
+  _browser.root = _kDictDir;
+  uint8_t n = _browser.load(this, _dictPickDir, ".txt");
 
   uint8_t baseOffset = 0;
   if (_dictPickDir == _kDictDir) {
@@ -1073,14 +1074,14 @@ void ChameleonMfcScreen::onBack() {
     case STATE_MF_MENU:
       Screen.goBack(); break;
     case STATE_DICT_SEL: {
-      // Climb the picker; exit to MF menu only when already at "/".
-      if (_dictPickDir == "/" || _dictPickDir.length() == 0) {
+      // Clamp at _kDictDir — never climb above /unigeek/nfc/dictionaries.
+      if (_dictPickDir == _kDictDir || _dictPickDir.length() == 0) {
         _dictPickDir = "";
         _goMfMenu();
         return;
       }
       int slash = _dictPickDir.lastIndexOf('/');
-      _dictPickDir = (slash > 0) ? _dictPickDir.substring(0, slash) : "/";
+      _dictPickDir = (slash > 0) ? _dictPickDir.substring(0, slash) : _kDictDir;
       _loadDictPicker();
       return;
     }

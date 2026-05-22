@@ -151,9 +151,9 @@ void GameMusicComposerScreen::onRender() {
 
 void GameMusicComposerScreen::onBack() {
   if (_state == STATE_FILES) {
-    if (_filesDir == "/" || _filesDir.length() == 0) { _enterMenu(); return; }
+    if (_filesDir == kMusicDir || _filesDir.length() == 0) { _enterMenu(); return; }
     int slash = _filesDir.lastIndexOf('/');
-    _filesDir = (slash > 0) ? _filesDir.substring(0, slash) : "/";
+    _filesDir = (slash > 0) ? _filesDir.substring(0, slash) : kMusicDir;
     _enterFiles();
     return;
   }
@@ -215,8 +215,8 @@ void GameMusicComposerScreen::_enterMenu() {
 void GameMusicComposerScreen::_enterFiles() {
   _state = STATE_FILES;
   if (_filesDir.length() == 0) _filesDir = kMusicDir;
-  uint8_t n = _browser.load(this, _filesDir, BrowseFileView::Mode(".rtttl"),
-                            "song", /*prependParent=*/true);
+  _browser.root = kMusicDir;
+  uint8_t n = _browser.load(this, _filesDir, BrowseFileView::Mode(".rtttl"), "song");
   if (n == 0 && _filesDir == kMusicDir) {
     ShowStatusAction::show("No saved songs");
     _enterMenu();

@@ -179,8 +179,8 @@ void WifiBeaconAttackScreen::onBack()
 {
   if (_state == STATE_ATTACKING) { _stop(); return; }
   if (_state == STATE_FILE_PICK) {
-    // BACK climbs the picker; at default DICT_DIR or "/", exit to menu.
-    if (_pickerDir == "/" || _pickerDir.length() == 0 || _pickerDir == DICT_DIR) {
+    // Clamp at DICT_DIR — never climb above /unigeek/wifi/beacon_dicts.
+    if (_pickerDir == DICT_DIR || _pickerDir.length() == 0) {
       _pickerDir = "";
       _state = STATE_MENU;
       setItems(_menuItems, 3);
@@ -188,7 +188,7 @@ void WifiBeaconAttackScreen::onBack()
       return;
     }
     int slash = _pickerDir.lastIndexOf('/');
-    _pickerDir = (slash > 0) ? _pickerDir.substring(0, slash) : "/";
+    _pickerDir = (slash > 0) ? _pickerDir.substring(0, slash) : DICT_DIR;
     _showFilePicker();
     return;
   }
@@ -424,7 +424,8 @@ void WifiBeaconAttackScreen::_showFilePicker()
   uint8_t n = 0;
   if (Uni.Storage && Uni.Storage->isAvailable()) {
     if (_pickerDir == DICT_DIR) Uni.Storage->makeDir(DICT_DIR);
-    n = _browser.load(this, _pickerDir, ".txt", nullptr, /*prependParent=*/true);
+    _browser.root = DICT_DIR;
+    n = _browser.load(this, _pickerDir, ".txt");
   }
 
   // "Built In" is only meaningful at the default location.

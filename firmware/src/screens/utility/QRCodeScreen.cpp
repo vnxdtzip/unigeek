@@ -14,14 +14,14 @@ void QRCodeScreen::onInit() {
 
 void QRCodeScreen::onBack() {
   if (_state == STATE_SELECT_FILE) {
-    if (_currentPath == "/" || _currentPath.length() == 0) {
+    if (_currentPath == _qrPath || _currentPath.length() == 0) {
       _state = STATE_MENU;
       _refreshMenu();
       setItems(_menuItems);
       return;
     }
     int last = _currentPath.lastIndexOf('/');
-    _currentPath = (last > 0) ? _currentPath.substring(0, last) : "/";
+    _currentPath = (last > 0) ? _currentPath.substring(0, last) : _qrPath;
     _scanFiles(_currentPath);
     return;
   }
@@ -84,7 +84,8 @@ void QRCodeScreen::_generate() {
 void QRCodeScreen::_scanFiles(const String& path) {
   _state = STATE_SELECT_FILE;
   _currentPath = path;
-  uint8_t n = _browser.load(this, path, nullptr, "FILE", /*prependParent=*/true);
+  _browser.root = _qrPath;
+  uint8_t n = _browser.load(this, path, nullptr, "FILE");
   if (n == 0) {
     ShowStatusAction::show("Cannot open directory", 1500);
     _state = STATE_MENU;

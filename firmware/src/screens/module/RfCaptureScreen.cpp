@@ -444,11 +444,11 @@ void RfCaptureScreen::_loadBrowseDir(const String& path) {
     Uni.Storage->makeDir(path.c_str());
   }
 
-  // prependParent=true → BrowseFileView injects a clickable ".." entry at
-  // index 0 whenever we're below the screen's root. BACK still works the
-  // same; this is just the in-list alternative.
-  const bool atRoot = (path == kRootPath);
-  uint8_t n = _browser.load(this, path, ".sub", nullptr, /*prependParent=*/!atRoot);
+  // _browser.root confines the picker to kRootPath — ".." appears below
+  // the root but never resolves above it. BACK still works the same; this
+  // is just the in-list alternative.
+  _browser.root = kRootPath;
+  uint8_t n = _browser.load(this, path, ".sub");
   setItems(_browser.items(), n);
 }
 

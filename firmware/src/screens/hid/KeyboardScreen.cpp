@@ -187,12 +187,14 @@ void KeyboardScreen::onItemSelected(uint8_t index)
 void KeyboardScreen::onBack()
 {
   if (_state == STATE_SELECT_FILE) {
-    if (_curPath == "/" || _curPath.length() == 0) {
+    // Clamp at kDuckyBase — don't let the picker climb above /unigeek/hid/duckyscript
+    // into the rest of the SD card.
+    if (_curPath == kDuckyBase || _curPath.length() == 0) {
       _goMenu();
       return;
     }
     int slash = _curPath.lastIndexOf('/');
-    String parent = (slash > 0) ? _curPath.substring(0, slash) : "/";
+    String parent = (slash > 0) ? _curPath.substring(0, slash) : kDuckyBase;
     _showFiles(parent);
   } else if (_state == STATE_MEDIA_MENU) {
     _goMenu();
@@ -254,7 +256,10 @@ void KeyboardScreen::_showFiles(const String& path)
 
   _curPath = path;
   _state   = STATE_SELECT_FILE;
-  uint8_t n = _browser.load(this, path, BrowseFileView::Mode{}, nullptr, /*prependParent=*/true);
+  // ".." only below the screen's root — _browser.root clamps the parent
+  // entry so the picker can never escape /unigeek/hid/duckyscript.
+  _browser.root = kDuckyBase;
+  uint8_t n = _browser.load(this, path);
 
   if (n == 0) {
     ShowStatusAction::show("No files found", 1500);

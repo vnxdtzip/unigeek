@@ -8,19 +8,21 @@ void BrowseFileView::showLoading()
 }
 
 uint8_t BrowseFileView::load(BaseScreen* host, const String& dir,
-                              Mode mode, const char* fileSublabel,
-                              bool prependParent)
+                              Mode mode, const char* fileSublabel)
 {
   _count = 0;
   showLoading();
 
   if (!Uni.Storage || !Uni.Storage->isAvailable()) return 0;
 
-  // Prepend ".." → parent dir. Stays in `_entries[0]` regardless of sort, so
-  // the user-facing list always has Up first.
-  if (prependParent && dir != "/" && dir.length() > 0 && _count < kCap) {
+  // Prepend ".." → parent dir, but only when we're below `root`. The parent
+  // is clamped to `root` so a picker confined to /unigeek/foo can never let
+  // its ".." entry resolve into /unigeek or /. Stays in `_entries[0]`
+  // regardless of sort, so the user-facing list always has Up first.
+  if (dir != root && dir.length() > 0 && _count < kCap) {
     int slash = dir.lastIndexOf('/');
-    String parent = (slash > 0) ? dir.substring(0, slash) : "/";
+    String parent = (slash > 0) ? dir.substring(0, slash) : root;
+    if (root.length() > 1 && !parent.startsWith(root)) parent = root;
     _entries[_count].name  = "..";
     _entries[_count].path  = parent;
     _entries[_count].isDir = true;

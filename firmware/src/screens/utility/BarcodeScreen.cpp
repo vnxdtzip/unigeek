@@ -14,14 +14,14 @@ void BarcodeScreen::onInit() {
 
 void BarcodeScreen::onBack() {
   if (_state == STATE_SELECT_FILE) {
-    if (_currentPath == "/" || _currentPath.length() == 0) {
+    if (_currentPath == _barcodePath || _currentPath.length() == 0) {
       _state = STATE_MENU;
       _refreshMenu();
       setItems(_menuItems);
       return;
     }
     int last = _currentPath.lastIndexOf('/');
-    _currentPath = (last > 0) ? _currentPath.substring(0, last) : "/";
+    _currentPath = (last > 0) ? _currentPath.substring(0, last) : _barcodePath;
     _scanFiles(_currentPath);
     return;
   }
@@ -84,7 +84,8 @@ void BarcodeScreen::_generate() {
 void BarcodeScreen::_scanFiles(const String& path) {
   _state = STATE_SELECT_FILE;
   _currentPath = path;
-  uint8_t n = _browser.load(this, path, nullptr, "FILE", /*prependParent=*/true);
+  _browser.root = _barcodePath;
+  uint8_t n = _browser.load(this, path, nullptr, "FILE");
   if (n == 0) {
     ShowStatusAction::show("Cannot open directory", 1500);
     _state = STATE_MENU;

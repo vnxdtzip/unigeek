@@ -1,5 +1,6 @@
 #pragma once
 #include "ui/templates/ListScreen.h"
+#include "ui/views/BrowseFileView.h"
 
 class ChameleonSlotEditScreen : public ListScreen {
 public:
@@ -20,6 +21,8 @@ private:
   ListItem _items[kCount];
   char     _labels[kCount][22];
   char     _subs[kCount][22];
+
+  BrowseFileView _browser;  // shared file picker (HF dump browse)
 
   uint16_t _hfType    = 0;
   uint16_t _lfType    = 0;

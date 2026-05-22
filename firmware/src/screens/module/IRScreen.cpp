@@ -120,13 +120,13 @@ void IRScreen::onBack() {
     _ir.end();
     _showMenu();
   } else if (_state == STATE_SEND_BROWSE) {
-    // Climb to parent if possible; exit to menu only when already at "/".
-    // Lets users browse out of /unigeek/ir into any directory on storage.
-    if (_browsePath == "/" || _browsePath.length() == 0) {
+    // Climb to parent if below kRootPath; at the screen's root, exit to menu.
+    // Keeps the picker confined to /unigeek/ir — no whole-SD-card browse.
+    if (_browsePath == kRootPath || _browsePath.length() == 0) {
       _showMenu();
     } else {
       int slash = _browsePath.lastIndexOf('/');
-      String parent = (slash > 0) ? _browsePath.substring(0, slash) : "/";
+      String parent = (slash > 0) ? _browsePath.substring(0, slash) : kRootPath;
       _loadBrowseDir(parent);
     }
   } else if (_state == STATE_SEND_LIST) {
@@ -417,7 +417,8 @@ void IRScreen::_loadBrowseDir(const String& path) {
   if (path == kRootPath) folderName = "IR Files";
   snprintf(_titleBuf, sizeof(_titleBuf), "%s", folderName.c_str());
 
-  uint8_t n = _browser.load(this, path, ".ir", nullptr, /*prependParent=*/true);
+  _browser.root = kRootPath;
+  uint8_t n = _browser.load(this, path, ".ir");
 
   if (n == 0 && path == kRootPath) {
     ShowStatusAction::show("No IR files found in /unigeek/ir/");

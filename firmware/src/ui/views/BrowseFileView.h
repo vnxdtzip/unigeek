@@ -9,6 +9,8 @@
 // Usage — aggregate into your screen class:
 //   BrowseFileView _browser;
 //
+//   void onInit() { _browser.root = "/unigeek/lua"; }  // confine to this subtree
+//
 //   void _loadDir(const String& path) {
 //     uint8_t n = _browser.load(this, path);                    // all files + dirs
 //     uint8_t n = _browser.load(this, path, ".ir");             // .ir files + dirs only
@@ -19,6 +21,12 @@
 //   // On selection:
 //   if (_browser.entry(index).isDir)  _loadDir(_browser.entry(index).path);
 //   else                              _openFile(_browser.entry(index).path);
+//
+// Parent navigation: a clickable ".." row is inserted at index 0 whenever the
+// loaded dir is not equal to `root`. Its `entry.path` resolves to the lexical
+// parent (clamped to `root` so the picker can never escape the configured
+// subtree). When `root` stays at the default "/" the picker can climb to the
+// filesystem root only.
 //
 // For screens with fully custom listing logic, call showLoading() explicitly:
 //   BrowseFileView::showLoading();   // before your manual listDir
@@ -48,23 +56,22 @@ struct BrowseFileView {
     bool   isDir = false;
   };
 
+  // Subtree the picker is confined to. ".." inserts only below this path and
+  // never resolves above it. Default "/" = no confinement (filesystem root).
+  String root = "/";
+
   // Show "Loading..." status bar overlay.
   static void showLoading();
 
-  // Load a directory: flash loading, sort dirs-first then alpha, build Item rows.
+  // Load a directory: flash loading, sort dirs-first then alpha, build Item
+  // rows. Inserts ".." at index 0 when `dir != root`.
   //   mode           - ALL, DIRECTORY, or a file extension string like ".ir"
   //   fileSublabel   - sublabel on file rows; nullptr = none
   //                    Directory rows always get "DIR".
-  //   prependParent  - when true and dir is not "/", inserts a ".." entry as
-  //                    the first row whose path resolves to the parent dir.
-  //                    Callers handling isDir entries by re-calling load() with
-  //                    `entry.path` get parent navigation for free; opt-out for
-  //                    screens that maintain their own pathHistory.
   // Returns populated count. Returns 0 if storage unavailable.
   uint8_t load(BaseScreen* host, const String& dir,
-               Mode        mode          = {},
-               const char* fileSublabel  = nullptr,
-               bool        prependParent = false);
+               Mode        mode         = {},
+               const char* fileSublabel = nullptr);
 
   uint8_t        count()          const { return _count; }
   const Entry&   entry(uint8_t i) const { return _entries[i]; }

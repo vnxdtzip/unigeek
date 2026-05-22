@@ -206,12 +206,12 @@ void PN532I2cScreen::onBack() {
       _goMain();
       break;
     case STATE_DICT_SELECT:
-      if (_dictPickDir == "/" || _dictPickDir.length() == 0) {
+      if (_dictPickDir == _dictPath || _dictPickDir.length() == 0) {
         _dictPickDir = "";
         _goMifare();
       } else {
         int slash = _dictPickDir.lastIndexOf('/');
-        _dictPickDir = (slash > 0) ? _dictPickDir.substring(0, slash) : "/";
+        _dictPickDir = (slash > 0) ? _dictPickDir.substring(0, slash) : _dictPath;
         _doDictionaryPicker();
       }
       break;
@@ -608,7 +608,8 @@ void PN532I2cScreen::_doDictionaryPicker() {
 
   _state = STATE_DICT_SELECT;
   if (_dictPickDir.length() == 0) _dictPickDir = _dictPath;
-  uint8_t n = _browser.load(this, _dictPickDir, ".txt", nullptr, /*prependParent=*/true);
+  _browser.root = _dictPath;
+  uint8_t n = _browser.load(this, _dictPickDir, ".txt");
   if (n == 0 && _dictPickDir == _dictPath) {
     ShowStatusAction::show("No dictionary files");
     _goMifare();

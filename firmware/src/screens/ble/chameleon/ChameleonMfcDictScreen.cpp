@@ -38,7 +38,8 @@ uint8_t ChameleonMfcDictScreen::_trailerBlock(uint8_t sector) {
 
 void ChameleonMfcDictScreen::_loadFilePicker() {
   if (_pickDir.length() == 0) _pickDir = kDictDir;
-  uint8_t n = _browser.load(this, _pickDir, ".txt", nullptr, /*prependParent=*/true);
+  _browser.root = kDictDir;
+  uint8_t n = _browser.load(this, _pickDir, ".txt");
 
   // "Built-in keys" only at the default kDictDir — pinned at index 0.
   uint8_t baseOffset = 0;
@@ -58,14 +59,14 @@ void ChameleonMfcDictScreen::onInit() {
 
 void ChameleonMfcDictScreen::onBack() {
   if (_state == STATE_SELECT) {
-    // Climb the picker. At "/" or empty, exit the screen.
-    if (_pickDir == "/" || _pickDir.length() == 0) {
+    // Clamp at kDictDir — never climb above /unigeek/nfc/dictionaries.
+    if (_pickDir == kDictDir || _pickDir.length() == 0) {
       _pickDir = "";
       Screen.goBack();
       return;
     }
     int slash = _pickDir.lastIndexOf('/');
-    _pickDir = (slash > 0) ? _pickDir.substring(0, slash) : "/";
+    _pickDir = (slash > 0) ? _pickDir.substring(0, slash) : kDictDir;
     _loadFilePicker();
     render();
     return;
