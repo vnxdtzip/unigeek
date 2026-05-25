@@ -1,0 +1,57 @@
+# General Settings
+
+Device-wide preferences, reached from **Main menu → Settings**. Every change is written to `/unigeek/config` on device storage and persists across reboots. The list adapts to the board — hardware-dependent rows only appear when the board supports them, so two boards can show different Settings menus.
+
+## Always available
+
+These rows show on every board.
+
+| Setting | What it does | Default |
+|---|---|---|
+| Name | Device name (text input) used for BLE/HID advertising and as the default Web/BLE File Manager label | `UniGeek` |
+| Auto Display Off | Turns the screen off after an idle timeout to save power | On |
+| Display Off | Idle timeout, in seconds, before the screen turns off | `10`s |
+| Brightness | Backlight level | `70`% |
+| Primary Color | Accent/theme color — Blue, Red, Green, Cyan, Purple, Brown, Orange, Violet, Navy | Blue |
+| Web Password | Login password for the WiFi **Web File Manager** (text input) | `admin` |
+| Serial File Manager | Enable/disable the USB-serial file manager — see below | On |
+| Pin Setting | Opens GPIO pin configuration for external modules — see [setting-pin.md](setting-pin.md) | — |
+| Device Status | Read-only hardware view: CPU frequency, free RAM, PSRAM, storage | — |
+| About | Firmware version, build date, credits | — |
+
+## Hardware-dependent
+
+These rows appear only on boards with the matching hardware.
+
+| Setting | What it does | Default | Shown on |
+|---|---|---|---|
+| Auto Power Off | Fully powers the device off after an idle timeout | On | Battery / power-managed boards: M5StickC Plus 1.1 & 2, Cardputer, Cardputer Adv, CoreS3, StickC S3, T-Lora Pager, T-Embed CC1101 |
+| Power Off | Idle timeout, in seconds, before power-off | `60`s | Same as Auto Power Off |
+| Volume | Speaker output level (hardware volume) | `75`% | Boards with a real speaker + volume control: Cardputer, Cardputer Adv, CoreS3, StickC S3, T-Lora Pager, T-Embed CC1101 |
+| Navigation Sound | Beep on navigation / key presses | On | Any board with sound (the Volume boards **plus** M5StickC Plus 1.1 & 2, which have a buzzer) |
+| Speaker Test | Plays Win / Lose / Notification / Beep to verify audio | — | Same as Navigation Sound |
+| Navigation Mode | Switch Default vs Encoder/Joystick navigation | Default | M5StickC Plus 1.1 & 2 only |
+| Screen Orientation | Rotate display Normal vs Flipped (also swaps UP/DOWN) | Normal | M5StickC Plus 1.1 & 2, StickC S3, CoreS3, CYD |
+| Touch Guide | Replays the first-run touch gesture tutorial | — | Touch-only navigation boards: CoreS3, CYD |
+| Navigation Overlay | Show/hide the on-screen touch navigation overlay | Show | Touch-only navigation boards: CoreS3, CYD |
+| Touch Calibration | Three-point resistive-touch calibration | — | CYD touch boards |
+
+> [!note]
+> "Power Off" (full shutdown) is distinct from "Display Off" (screen only). Boards without a power-management chip — T-Display, T-Display S3, and the CYD/DIY USB-powered boards — only have the Display Off pair.
+
+## Serial File Manager
+
+Enables or disables the always-on **USB-serial** file manager that powers the `https://unigeek.xid.run/app/files` page (connect over USB, no WiFi). It's **On** by default.
+
+- Turn it **Off** to reclaim about **12 KB of internal SRAM** (the 8 KB protocol frame buffer plus the 4 KB serial RX FIFO). This is worth doing on no-PSRAM boards (M5StickC Plus, Cardputer, T-Display, …) where internal SRAM is scarce.
+- The toggle is **applied on the next restart** — flipping it resizes the serial RX buffer and frees/allocates the protocol core, which can't be done safely on a live serial link.
+- This only affects the **USB-serial** transport. The **BLE** file manager is independent and started on demand from **Bluetooth → File Manager** — see [BLE File Manager](https://unigeek.xid.run/features/ble-file-manager).
+
+> [!warn]
+> If `https://unigeek.xid.run/app/files` won't connect over USB, check that **Settings → Serial File Manager** is **On** and that the device has been restarted since the last change.
+
+## Related
+
+- [setting-pin.md](setting-pin.md) — per-module GPIO pin configuration (also reachable from the Modules menu)
+- [BLE File Manager](https://unigeek.xid.run/features/ble-file-manager) — the browser file manager over BLE and USB serial
+- [web-file-manager.md](web-file-manager.md) — the WiFi-based file manager that uses the **Web Password** above

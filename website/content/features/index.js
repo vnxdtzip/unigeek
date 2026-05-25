@@ -18,6 +18,18 @@ function createRenderer() {
     return `<blockquote${cls}>${stripped}</blockquote>\n`;
   };
 
+  // Cross-doc links use the source `slug.md` form (so they also resolve when
+  // browsing the repo). On the website, rewrite a relative `slug.md` (optionally
+  // with an #anchor) to its real route `/features/slug`. External/absolute
+  // links pass through untouched.
+  renderer.link = function (href, title, text) {
+    let outHref = href || "";
+    const m = /^([a-z0-9-]+)\.md(#[^)]*)?$/i.exec(outHref);
+    if (m) outHref = `/features/${m[1]}${m[2] || ""}`;
+    const titleAttr = title ? ` title="${title}"` : "";
+    return `<a href="${outHref}"${titleAttr}>${text}</a>`;
+  };
+
   // Body cells that contain exactly "Bronze" / "Silver" / "Gold" / "Platinum"
   // render as tier pills (same visual language as the in-app achievement list).
   renderer.tablecell = function (content, flags) {

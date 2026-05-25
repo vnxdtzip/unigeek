@@ -986,6 +986,16 @@ export default function FileManagerClient({ expectedVersion }) {
         </div>
       )}
 
+      {supported && !isConnected && (
+        <div className="fm-banner fm-banner-warn">
+          Connecting over <strong>USB</strong>? Make sure <strong>Settings &rarr; Serial File
+          Manager</strong> is <strong>On</strong> on the device &mdash; it&apos;s on by default,
+          but can be turned off to save memory, and USB won&apos;t respond while it&apos;s off
+          (toggling it needs a restart). For <strong>Bluetooth</strong>, open <strong>Bluetooth
+          &rarr; File Manager</strong> on the device so it starts advertising.
+        </div>
+      )}
+
       {errorMsg && (
         <div className="fm-banner fm-banner-err">
           {errorMsg}

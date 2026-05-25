@@ -48,6 +48,7 @@ export const CATALOG = [
   { slug: "ble-analyzer",         title: "BLE Analyzer",        category: "ble",      summary: "Scan nearby BLE devices; tap any result for a full info view with vendor ID, RSSI, distance estimate, manufacturer data, services, and a scrollable detail drill-down", hasDetail: true,  stable: true },
   { slug: "chameleon-ultra",      title: "Chameleon Ultra",     category: "ble",      summary: "BLE client for ChameleonUltra / ChameleonLite — 8-slot manager, MF dict, static + weak-PRNG nested attacks, MFKey32, T5577 write", hasDetail: true,  stable: true },
   { slug: "claude-buddy",         title: "Claude Buddy",        category: "ble",      summary: "BLE desk pet for Claude Desktop on macOS / Windows — shows session status, running tasks, and lets you approve permission prompts from the device", hasDetail: true,  stable: true },
+  { slug: "ble-file-manager",     title: "BLE File Manager",    category: "ble",      summary: "Manage on-device files wirelessly from the browser over BLE (Nordic UART) — no WiFi; the same https://unigeek.xid.run/app/files page also connects over USB serial", hasDetail: true,  stable: true },
 
   // HID
   { slug: "ducky-script",         title: "Ducky Script",        category: "keyboard", summary: "Run script files from storage to automate keystrokes over BLE or USB HID — variables, IF/WHILE, functions, expressions (DuckyScript 3.0 subset)", hasDetail: true,  stable: true },
@@ -65,8 +66,8 @@ export const CATALOG = [
   { slug: "nfc-pn532-i2c",       title: "NFC (PN532 I2C)",     category: "module",   summary: "PN532 over I2C — ISO14443A, ISO15693, EM4100, MIFARE Classic, Ultralight, and magic-card tools; auto-detects external or internal I2C bus", hasDetail: true,  stable: true },
   { slug: "gps-wardriving",       title: "GPS & Wardriving",    category: "module",   summary: "Live GPS view, WiFi/BLE wardriving with Wigle CSV export, and Wigle upload integration",             hasDetail: true,  stable: true },
   { slug: "ir-remote",            title: "IR Remote",           category: "module",   summary: "Capture, replay, and manage IR signals — compatible with Flipper Zero and Bruce formats",            hasDetail: true,  stable: true },
-  { slug: "sub-ghz",              title: "Sub-GHz (CC1101)",    category: "module",   summary: "Capture, replay, and jam Sub-GHz RF signals — live RAW/Code receive filter, scrollable Signal Info view, unified file popup; compatible with Flipper Zero .sub format", hasDetail: true,  stable: true },
-  { slug: "m5-rf433",             title: "M5 RF433",            category: "module",   summary: "Capture, replay, and jam 433.92 MHz signals via the M5 RF433T/R two-pin GPIO modules — no CC1101 needed; shares .sub files with Sub-GHz", hasDetail: true,  stable: true },
+  { slug: "sub-ghz",              title: "Sub-GHz (CC1101)",    category: "module",   summary: "Capture, replay, and jam Sub-GHz RF signals — live RAW/Code receive filter, scrollable Signal Info view, KeeLoq auto-decode + counter-step (Replay +1) rolling-code replay, unified file popup; compatible with Flipper Zero .sub format", hasDetail: true,  stable: true },
+  { slug: "m5-rf433",             title: "M5 RF433",            category: "module",   summary: "Capture, replay, and jam 433.92 MHz signals via the M5 RF433T/R two-pin GPIO modules — no CC1101 needed; KeeLoq auto-decode + Replay +1; shares .sub files with Sub-GHz", hasDetail: true,  stable: true },
   { slug: "nrf24",                title: "NRF24L01+",           category: "module",   summary: "2.4 GHz spectrum analyzer, multi-mode jammer, and MouseJack wireless keyboard injection",             hasDetail: true,  stable: true },
   { slug: "pin-setting",          title: "Pin Setting",         category: "module",   summary: "Configure GPIO pins for GPS, I2C, CC1101, NRF24, PN532, and CoreS3 Grove 5V direction — defaults per board, with safety notes", hasDetail: true,  stable: true },
 
@@ -92,7 +93,7 @@ export const CATALOG = [
   { slug: "music-composer",       title: "Music Composer",      category: "game",     summary: "Nokia-style RTTTL step editor for boards with a speaker — 64 steps × MIDI pitch / rest / length, per-song BPM, audition on UP/DOWN, save .rtttl to SD; 7 built-in demos", hasDetail: true,  stable: true },
 
   // Settings
-  { slug: "setting-general",      title: "General Settings",    category: "setting",  summary: "Device name, display timeout, brightness, volume, navigation sound, theme color, WFM password",    hasDetail: false, stable: true },
+  { slug: "setting-general",      title: "General Settings",    category: "setting",  summary: "Device name, display timeout, brightness, volume, navigation sound, theme color, WFM password, Serial File Manager on/off (saves SRAM when off)", hasDetail: true,  stable: true },
   { slug: "setting-pin",          title: "Pin Settings",        category: "setting",  summary: "Configure GPIO pins for GPS, I2C, CC1101, NRF24, PN532, and CoreS3 Grove 5V direction — defaults per board, with safety notes", hasDetail: true,  stable: true },
   { slug: "setting-nav-mode",     title: "Navigation Mode",     category: "setting",  summary: "Switch between Default and Encoder/Joystick navigation — M5StickC Plus 1.1 and 2 only",              hasDetail: false, stable: true },
   { slug: "setting-hand-orient",  title: "Screen Orientation",  category: "setting",  summary: "Toggle Left/Right screen orientation — M5StickC Plus 1.1, Plus 2, and StickC S3 only",              hasDetail: false, stable: true },

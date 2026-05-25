@@ -83,6 +83,7 @@ Multi-tool firmware for ESP32-based handheld devices. Built with PlatformIO + Ar
 - **WhisperPair** — Tests Google Fast Pair devices for CVE-2025-36911; performs an ECDH key exchange and forged KBP handshake to detect unauthorized pairing vulnerability ([details](knowledge/whisperpair.md))
 - **Claude Buddy** — BLE desk pet that pairs with Claude Desktop on macOS / Windows over Nordic UART; shows session status, running tasks, and queued approval prompts; approve or deny tool calls directly from the device with animated buddy character ([details](knowledge/claude-buddy.md))
 - **Chameleon Ultra** — Bluetooth LE client for ChameleonUltra / ChameleonLite RFID emulator devices ([details](knowledge/chameleon-ultra.md))
+- **File Manager** — Manage on-device files wirelessly from a browser over BLE (Nordic UART) — no WiFi or password needed; the device advertises as `UniGeek FM` and connects from `https://unigeek.xid.run/app/files/` via Web Bluetooth; the same page also connects over USB serial ([details](knowledge/ble-file-manager.md))
   - **Scan & Connect** — BLE scan with signal strength; connect by address
   - **Device Info** — firmware version, battery %, chip ID, active slot, mode
   - **Settings** — animation mode, button A/B short + long-press actions, BLE pairing toggle, save to flash, reset defaults, clear BLE bonds
@@ -206,10 +207,11 @@ Multi-tool firmware for ESP32-based handheld devices. Built with PlatformIO + Ar
   - **Frequency** — Manually set the operating frequency (presets: 300, 315, 345, 390, 433.92, 434, 868, 915 MHz; custom 280–928 MHz)
   - **Receive** — Capture RF signals on the configured frequency with RcSwitch decoding (Princeton/fixed code) and RAW fallback; live **Receive Filter** toggle (`RAW` keeps decoded + unmatched pulse streams, `Code` drops raw noise) via LEFT/RIGHT on 4-way devices or hold-PRESS on 2-button devices; duplicate filtering; tap a capture for **Info / Replay / Save / Delete** popup; Info opens a scrollable key:value signal-detail view
   - **Send** — Browse and send `.sub` signal files from storage (`/unigeek/rf/`); tap a file for the same **Send / Info / Rename / Delete** popup
+  - **KeeLoq** — Captures decoded as RCSwitch protocol 23 are auto-matched against manufacturer keys in `/unigeek/mfcodes`; on a hit the Info view shows structured `Manufacturer / Serial / Button / Counter / Fix / Hop` fields and the popup gains a **Replay +1** option that advances the rolling-code counter, re-encrypts, and transmits (defeats simple rolling-code receivers, not seed-based/challenge-response systems); a **Mfcodes** menu row reloads the keystore after edits
   - **Jammer** — Transmit continuous noise on the configured frequency to disrupt Sub-GHz receivers
   - Compatible with Flipper Zero and Bruce `.sub` file formats
   - On M5StickC: CC1101 SPI (GPIO 32/33) is shared with GPS UART — the firmware manages the handoff automatically
-- **M5 RF433** — Capture, replay, and jam 433.92 MHz signals via the M5 RF433T (TX) and M5 RF433R (RX) single-pin Grove units; no CC1101 needed, fixed-frequency, two GPIO pins (default `GROVE_SDA` / `GROVE_SCL`); shares the `.sub` file format and the `/unigeek/rf/` folder with Sub-GHz so captures cross-load between the two modules ([details](knowledge/m5-rf433.md))
+- **M5 RF433** — Capture, replay, and jam 433.92 MHz signals via the M5 RF433T (TX) and M5 RF433R (RX) single-pin Grove units; no CC1101 needed, fixed-frequency, two GPIO pins (default `GROVE_SDA` / `GROVE_SCL`); shares the `.sub` file format and the `/unigeek/rf/` folder with Sub-GHz so captures cross-load between the two modules; same KeeLoq auto-decode + **Replay +1** and **Mfcodes** keystore as Sub-GHz ([details](knowledge/m5-rf433.md))
 - **NRF24L01+** — 2.4 GHz spectrum analysis, jamming, and MouseJack wireless keyboard injection ([details](knowledge/nrf24.md))
   - **Spectrum** — Live 126-channel 2.4 GHz spectrum sweep with peak hold; toggle between peak and bar display modes
   - **Jammer** — Disrupt 2.4 GHz devices using 10 preset channel lists (Full Spectrum, WiFi 2.4GHz, BLE Data, BLE Adv, BT Classic, USB Dongles, Video/FPV, RC Control, Zigbee, Drone FHSS), single-channel jammer, or configurable channel hopper
@@ -235,6 +237,7 @@ Full-screen profile accessible from the main menu. Displays:
 - Navigation sound toggle
 - Theme color
 - Web file manager password
+- Serial File Manager — enable/disable the always-on USB-serial file manager (used by `https://unigeek.xid.run/app/files`); on by default, turn off to reclaim ~12 KB of internal SRAM on no-PSRAM boards (applied on restart)
 - Pin configuration (GPS TX/RX/baud, external I2C SDA/SCL, CC1101 CS/GDO0, NRF24 CE/CSN) — also accessible from Modules menu
 - Navigation mode — Default or Encoder (M5StickC Plus only)
 - Hand orientation — Left/Right toggle that rotates the display and swaps UP/DOWN (M5StickC Plus 1.1, Plus 2, StickC S3)
@@ -383,4 +386,4 @@ This project was built with inspiration and reference from:
 - [LilyGoLib](https://github.com/Xinyuan-LilyGO/LilyGoLib) — Hardware reference for LilyGO T-Lora Pager
 - [M5Unified](https://github.com/m5stack/M5Unified) — Hardware reference for M5Stack devices (speaker, display, power)
 
-<!-- README last synced at commit: f71b3f6 (DuckyScript 3.0 subset + AI guidance, HID Media/Camera consumer keys, EAPOL Capture Target mode + 10s scan, M5 RF433 module, Sub-GHz RX filter + Signal Info view, T-Display S3 Touch board variant, on-screen keyboard _ \ | symbols) -->
+<!-- README last synced at commit: 9669925 (BLE File Manager over NUS + USB-serial /app/files page, KeeLoq auto-decode + Replay +1 rolling-code replay & Mfcodes keystore on Sub-GHz / M5 RF433, default mfcodes keystore shipped, BLE iOS/Android/Samsung spam tuning, faster listDir + ".." parent nav, Lua VM on PSRAM) -->
