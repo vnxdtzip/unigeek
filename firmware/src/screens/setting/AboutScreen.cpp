@@ -1,10 +1,7 @@
 #include "screens/setting/AboutScreen.h"
 #include "screens/setting/SettingScreen.h"
 #include "core/ScreenManager.h"
-
-#ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "dev"
-#endif
+#include "FirmwareVersion.h"
 
 void AboutScreen::onInit()
 {

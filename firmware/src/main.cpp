@@ -14,6 +14,7 @@ extern "C" {
 #include "core/AchievementManager.h"
 #include "core/RtcManager.h"
 #include "core/RandomSeed.h"
+#include "utils/uart/UartFileManager.h"
 
 #include "screens/CharacterScreen.h"
 #ifdef DEVICE_HAS_TOUCH_NAV
@@ -116,6 +117,9 @@ static void _mbedtlsPsramFree(void* p) {
 }
 
 void setup() {
+  // UartFileManager streams up to ~1 KB per frame. The default 256-byte RX
+  // FIFO would overflow before loop() can drain it, breaking upload CRCs.
+  Serial.setRxBufferSize(4096);
   Serial.begin(115200);
 
   if (psramFound()) {
@@ -124,6 +128,7 @@ void setup() {
 
   Uni.begin();
   Uni.initStorage();
+  UartFM.begin();
 #ifdef DEVICE_HAS_RTC
   RtcManager::syncSystemFromRtc();
 #endif
@@ -143,6 +148,7 @@ void setup() {
 
 void loop() {
   Uni.update();
+  UartFM.update();
 
   // ── Power saving ──────────────────────────────────────────────────────────
   IScreen* _cur       = Screen.current();

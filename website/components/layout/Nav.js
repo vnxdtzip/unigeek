@@ -10,11 +10,24 @@ const LINKS = [
   { href: '/features', label: 'Features' },
   { href: '/releases', label: 'Releases' },
   { href: '/install', label: 'Install' },
+  {
+    label: 'Apps',
+    match: '/app',
+    children: [
+      { href: '/app/files', label: 'File Manager' },
+      { href: '/app/download', label: 'Download', wip: true },
+    ],
+  },
 ];
 
 function isActive(pathname, href) {
   if (href === '/') return pathname === '/' || pathname === '';
   return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+function isGroupActive(pathname, item) {
+  if (item.match && pathname.startsWith(item.match)) return true;
+  return (item.children || []).some((c) => c.href && isActive(pathname, c.href));
 }
 
 export default function Nav() {
@@ -60,16 +73,56 @@ export default function Nav() {
           </span>
         </Link>
         <div className={`nav-links${open ? ' open' : ''}`} id="nav-links">
-          {LINKS.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              className={`nav-link${isActive(pathname, link.href) ? ' active' : ''}`}
-              onClick={() => setOpen(false)}
-            >
-              {link.label}
-            </Link>
-          ))}
+          {LINKS.map((link) => {
+            if (link.children) {
+              const groupActive = isGroupActive(pathname, link);
+              return (
+                <div
+                  key={link.label}
+                  className={`nav-group${groupActive ? ' active' : ''}`}
+                >
+                  <span className={`nav-link nav-link-parent${groupActive ? ' active' : ''}`}>
+                    {link.label}
+                    <span className="nav-caret" aria-hidden="true">▾</span>
+                  </span>
+                  <div className="nav-dropdown" role="menu">
+                    {link.children.map((child) => {
+                      if (child.wip) {
+                        return (
+                          <span key={child.label} className="nav-sub nav-sub-wip" role="menuitem" aria-disabled="true">
+                            <span>{child.label}</span>
+                            <span className="nav-sub-tag">WIP</span>
+                          </span>
+                        );
+                      }
+                      const active = isActive(pathname, child.href);
+                      return (
+                        <Link
+                          key={child.href}
+                          href={child.href}
+                          role="menuitem"
+                          className={`nav-sub${active ? ' active' : ''}`}
+                          onClick={() => setOpen(false)}
+                        >
+                          {child.label}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={`nav-link${isActive(pathname, link.href) ? ' active' : ''}`}
+                onClick={() => setOpen(false)}
+              >
+                {link.label}
+              </Link>
+            );
+          })}
           <div className="nav-mobile-status">
             <span className="status-dot" aria-hidden="true" />
             <span>
