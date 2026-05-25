@@ -15,7 +15,7 @@ These rows show on every board.
 | Primary Color | Accent/theme color — Blue, Red, Green, Cyan, Purple, Brown, Orange, Violet, Navy | Blue |
 | Web Password | Login password for the WiFi **Web File Manager** (text input) | `admin` |
 | Serial File Manager | Enable/disable the USB-serial file manager — see below | On |
-| Pin Setting | Opens GPIO pin configuration for external modules — see [setting-pin.md](setting-pin.md) | — |
+| Pin Setting | Opens GPIO pin configuration for external modules — see [Pin Settings](setting-pin.md) | — |
 | Device Status | Read-only hardware view: CPU frequency, free RAM, PSRAM, storage | — |
 | About | Firmware version, build date, credits | — |
 
@@ -45,13 +45,13 @@ Enables or disables the always-on **USB-serial** file manager that powers the `h
 
 - Turn it **Off** to reclaim about **12 KB of internal SRAM** (the 8 KB protocol frame buffer plus the 4 KB serial RX FIFO). This is worth doing on no-PSRAM boards (M5StickC Plus, Cardputer, T-Display, …) where internal SRAM is scarce.
 - The toggle is **applied on the next restart** — flipping it resizes the serial RX buffer and frees/allocates the protocol core, which can't be done safely on a live serial link.
-- This only affects the **USB-serial** transport. The **BLE** file manager is independent and started on demand from **Bluetooth → File Manager** — see [BLE File Manager](https://unigeek.xid.run/features/ble-file-manager).
+- This only affects the **USB-serial** transport. The **BLE** file manager is independent and started on demand from **Bluetooth → File Manager** — see [BLE File Manager](ble-file-manager.md).
 
 > [!warn]
 > If `https://unigeek.xid.run/app/files` won't connect over USB, check that **Settings → Serial File Manager** is **On** and that the device has been restarted since the last change.
 
 ## Related
 
-- [setting-pin.md](setting-pin.md) — per-module GPIO pin configuration (also reachable from the Modules menu)
-- [BLE File Manager](https://unigeek.xid.run/features/ble-file-manager) — the browser file manager over BLE and USB serial
-- [web-file-manager.md](web-file-manager.md) — the WiFi-based file manager that uses the **Web Password** above
+- [Pin Settings](setting-pin.md) — per-module GPIO pin configuration (also reachable from the Modules menu)
+- [BLE File Manager](ble-file-manager.md) — the browser file manager over BLE and USB serial
+- [Web File Manager](web-file-manager.md) — the WiFi-based file manager that uses the **Web Password** above
