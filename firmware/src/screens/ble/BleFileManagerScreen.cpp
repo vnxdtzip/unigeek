@@ -5,7 +5,7 @@
 #include "utils/uart/BleFileManager.h"
 
 static const char* kBleName = "UniGeek FM";
-static const char* kUrl     = "unigeek.xid.run/app/files/";
+static const char* kUrl     = "https://unigeek.xid.run/app/files/";
 
 BleFileManagerScreen::~BleFileManagerScreen() {
   BleFM.end();
@@ -69,7 +69,21 @@ void BleFileManagerScreen::onRender() {
   int midY = by + bh / 2;
   lcd.setTextDatum(TC_DATUM);
   lcd.setTextColor(TFT_GREEN, TFT_BLACK);
-  lcd.drawString(kUrl, cx, midY - 4);
+  if (lcd.textWidth(kUrl) <= (int)bw - 4) {
+    lcd.drawString(kUrl, cx, midY - 4);
+  } else {
+    // Too wide for narrow displays — wrap at the path boundary: scheme+host
+    // on the first line, path on the second.
+    String url       = kUrl;
+    int    schemeEnd = url.indexOf("//");
+    int    pathSlash = url.indexOf('/', schemeEnd >= 0 ? schemeEnd + 2 : 0);
+    if (pathSlash > 0) {
+      lcd.drawString(url.substring(0, pathSlash).c_str(), cx, midY - 10);
+      lcd.drawString(url.substring(pathSlash).c_str(),    cx, midY + 1);
+    } else {
+      lcd.drawString(kUrl, cx, midY - 4);
+    }
+  }
 
   // ── Footer hint ─────────────────────────────────────────────────────────
   lcd.setTextColor(TFT_DARKGREY, TFT_BLACK);
