@@ -307,34 +307,26 @@ void ChameleonSlotEditScreen::_writeContent() {
   if (!f) { render(); return; }
 
   if (strcmp(f, "hf") == 0) {
-    // Pick a .bin file from the dumps dir.
+    // Pick a .bin file from the dumps dir via BrowseFileView (sorted + filtered).
     static constexpr uint8_t kMax = 10;
-    IStorage::DirEntry entries[kMax];
-    String names[kMax];
-    uint8_t count = 0;
-    if (Uni.Storage && Uni.Storage->isAvailable()) {
-      uint8_t total = Uni.Storage->listDir("/unigeek/nfc/dumps", entries, kMax);
-      for (uint8_t i = 0; i < total && count < kMax; i++) {
-        if (!entries[i].isDir && entries[i].name.endsWith(".bin")) {
-          names[count++] = entries[i].name;
-        }
-      }
-    }
-    if (count == 0) {
+    uint8_t n = _browser.load(this, "/unigeek/nfc/dumps", ".bin");
+    if (n == 0) {
       ShowStatusAction::show("No .bin in nfc/dumps", 1500);
       render();
       return;
     }
+    uint8_t count = (n < kMax) ? n : kMax;
     InputSelectAction::Option opts[kMax];
     String vals[kMax];
     for (uint8_t i = 0; i < count; i++) {
       vals[i] = String(i);
-      opts[i] = { names[i].c_str(), vals[i].c_str() };
+      opts[i] = { _browser.entry(i).name.c_str(), vals[i].c_str() };
     }
     const char* r = InputSelectAction::popup("HF dump", opts, count, nullptr);
     if (!r) { render(); return; }
     uint8_t idx = (uint8_t)atoi(r);
-    String path = String("/unigeek/nfc/dumps/") + names[idx];
+    if (idx >= count) { render(); return; }
+    String path = _browser.entry(idx).path;
     bool ok = _writeHfFromBin(path.c_str());
     ShowStatusAction::show(ok ? "HF loaded to slot" : "HF load failed", 1500);
     if (ok) {

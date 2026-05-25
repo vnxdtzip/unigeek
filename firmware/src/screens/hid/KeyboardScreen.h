@@ -28,6 +28,7 @@ private:
     STATE_SELECT_FILE,
     STATE_RUNNING_SCRIPT,
     STATE_MOUSE_JIGGLE,
+    STATE_MEDIA_MENU,
   } _state = STATE_MENU;
 
   int               _mode;
@@ -47,9 +48,13 @@ private:
   static constexpr const char* kDuckyBase = "/unigeek/hid/duckyscript";
 
   // Menu (built dynamically)
-  static constexpr uint8_t kMaxMenu = 5;
+  static constexpr uint8_t kMaxMenu = 6;
   ListItem _menuItems[kMaxMenu];
   uint8_t  _menuCount = 0;
+
+  // Media / Consumer Control submenu
+  static constexpr uint8_t kMediaCount = 14;
+  ListItem _mediaItems[kMediaCount];
 
   // Mouse Jiggle
   static constexpr uint32_t kJiggleIntervalMs = 30000;
@@ -69,6 +74,8 @@ private:
   void _goMenu();
   void _goConnected();
   void _goMouseJiggle();
+  void _goMediaMenu();
+  void _sendMediaItem(uint8_t index);
   void _showFiles(const String& path);
   void _runDuckyScript(const String& path);
   void _addScriptLine(const String& text, bool ok);

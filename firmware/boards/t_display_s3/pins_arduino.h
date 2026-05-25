@@ -19,9 +19,23 @@
 #define MISO 13
 #define SCK 12
 
-// ─── I2C (Grove) ─────────────────────────────────────────
+// ─── I2C (Grove + on-board touch when DEVICE_HAS_TOUCH) ──
 static const uint8_t SDA = 18;
 static const uint8_t SCL = 17;
+
+// ─── Touch (LilyGo T-Display S3 Touch variant only) ──────
+// CST820 / CST816-compatible capacitive controller at 0x15. INT goes LOW
+// while a finger is down; RST is held LOW briefly at boot to reset the IC.
+#ifdef DEVICE_HAS_TOUCH
+#define TOUCH_INT       16
+#define TOUCH_RST       21
+#define TOUCH_I2C_ADDR  0x15
+// Touch panel reports finger coordinates in the display's native portrait
+// frame (170 wide × 320 tall). The screen runs in landscape (rotation 3),
+// so the nav code swaps and mirrors axes to match.
+#define TOUCH_NATIVE_W  170
+#define TOUCH_NATIVE_H  320
+#endif
 
 #define USER_SETUP_LOADED 1
 #define DISABLE_ALL_LIBRARY_WARNINGS 1

@@ -3,7 +3,7 @@ import KnownIssues from '@/components/install/KnownIssues';
 import Requirements from '@/components/install/Requirements';
 import { BOARDS } from '@/content/boards';
 import { FIRMWARE_VERSION } from '@/content/meta';
-import { getAllReleases } from '@/content/releases';
+import { getAllReleases, getAllVersions } from '@/content/releases';
 
 export const metadata = {
   title: 'Install — UniGeek',
@@ -21,6 +21,7 @@ export default function InstallPage() {
   const releases = getAllReleases();
   const rel = releases.find((r) => r.version === FIRMWARE_VERSION);
   const dateLabel = formatReleaseDate(rel?.date);
+  const versions = getAllVersions();
 
   return (
     <>
@@ -37,7 +38,7 @@ export default function InstallPage() {
 
       <div className="install-wrap">
         <KnownIssues boards={BOARDS} />
-        <InstallFlow boards={BOARDS} />
+        <InstallFlow boards={BOARDS} versions={versions} latestVersion={FIRMWARE_VERSION} />
         <Requirements />
       </div>
     </>

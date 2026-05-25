@@ -82,15 +82,20 @@ Capture RF signals on the configured frequency.
 
 1. Set the desired frequency first via **Detect Freq** (reference) and **Frequency** (set)
 2. Select **Receive**
-3. The device listens on the configured frequency
-4. Captured signals appear in the list with protocol details:
+3. The device listens on the configured frequency. The footer shows the current Receive Filter:
+   - **Filter: Code** (default) — drop raw captures; only emit signals that decoded as one of the 23 known protocols (Princeton, HT6P20B, CAME, NICE, KeeLoq, …). Cuts noise when hunting a fixed-code remote.
+   - **Filter: RAW** — capture both RCSwitch-decoded protocols **and** raw pulse streams that no protocol matched. Best for unknown remotes and unusual signals.
+4. Toggle between RAW / Code live without leaving the screen — the footer label updates immediately. Setting is session-only.
+   - **4-way devices** (Cardputer, Cardputer ADV, DIY Smoochie, DIY Marauder, sticks in Encoder mode): press **LEFT** or **RIGHT**.
+   - **2-way devices** (M5StickS3, T-Display, T-Lora Pager, T-Embed CC1101, CYD touch, CoreS3, sticks in default mode): **hold OK / PRESS for 500 ms**. The release after the hold is swallowed so it doesn't open a capture popup.
+5. Captured signals appear in the list with protocol details:
    - **RcSwitch**: `0xABCDEF P1 24b` (hex value, protocol number, bit count)
    - **RAW**: `RAW 120 pulses` (raw pulse count)
-5. Duplicate RcSwitch signals are automatically filtered
-6. Select a captured signal to **Replay**, **Save**, or **Delete** it
-7. Saved files go to `/unigeek/rf/` in `.sub` format
-8. Up to 15 signals can be captured per session
-9. Press **BACK** to stop receiving and return to the menu
+6. Duplicate RcSwitch signals are automatically filtered
+7. Select a captured signal to open the popup — **Info / Replay / Save / Delete**. **Info** opens a scrollable key:value detail view (frequency, preset, protocol, key, TE, bit length, RAW pulse count); BACK from Info returns to the popup.
+8. Saved files go to `/unigeek/rf/` in `.sub` format
+9. Up to 15 signals can be captured per session
+10. Press **BACK** to stop receiving and return to the menu
 
 ## Send
 
@@ -98,12 +103,12 @@ Browse and send `.sub` signal files from storage.
 
 1. Select **Send** from the menu
 2. Browse from `/unigeek/rf/` — navigate into subfolders
-3. **Tap** a file to send it immediately
-4. **Hold** a file (1 second) to open the action menu:
+3. Tap a file to open the action menu:
    - **Send** — transmit the signal
+   - **Info** — open the signal info view (same fields as captured-signal Info; BACK returns here)
    - **Rename** — rename the file
    - **Delete** — delete the file
-5. The frequency stored in the file is used automatically during send
+4. The frequency stored in the file is used automatically during send
 
 ## Jammer
 
@@ -144,6 +149,77 @@ Key: 0xABCDEF
 ```
 
 Files from Flipper Zero and Bruce firmware are compatible and can be placed directly in `/unigeek/rf/`.
+
+## KeeLoq auto-decode
+
+> [!danger]
+> KeeLoq decode and rolling-code replay are intended for testing remotes, gates, and barriers **you own or have explicit written permission to test**. Using them against vehicles, garages, or property that isn't yours is illegal in most jurisdictions and may be prosecuted as unauthorized access, burglary tools possession, or vehicle theft regardless of whether the replay succeeds.
+
+When a captured signal decodes as **RCSwitch protocol 23** (KeeLoq), the firmware automatically tries every manufacturer key stored in `/unigeek/mfcodes`. On a successful match, the **Signal Info** view replaces the opaque `Key:` row with structured fields:
+
+- **Manufacturer** — `NICE_Smilo`, `FAAC_RC,XT`, `Centurion`, etc.
+- **Serial** — `0x12345`
+- **Button** — `0`–`15`
+- **Counter** — `0x4D7`
+- **Fix** — top 32 bits of the reversed payload (always shown)
+- **Hop** — decrypted plaintext
+
+If `/unigeek/mfcodes` is absent or no key matches, the Info view still shows `Manufacturer: Unknown` plus the raw `Fix:` and `Encrypted:` fields — the structured fields don't require the keystore.
+
+### Replay with counter+1 (rolling-code bypass)
+
+> [!danger]
+> `Replay +1` actively bypasses a rolling-code authentication mechanism — qualitatively different from passive capture or fixed-code replay. Only run it against your own hardware. In most jurisdictions, unauthorized use against third-party gates, garages, or vehicles is a separate criminal offense from simple eavesdropping (often felony-tier).
+
+Captured KeeLoq signals (protocol 23) that decoded successfully against the keystore unlock an extra option in the action popup:
+
+- **Replay** — always available. Transmits the captured value byte-exact. Works on fixed-code remotes; fails on rolling-code receivers because the counter is reused.
+- **Replay +1** — only shown when `Manufacturer` is resolved AND its key still lives in `/unigeek/mfcodes`. Advances `cnt` by 1, rebuilds the hop word with the manufacturer-specific layout, re-encrypts with the stored key, and transmits the new 64-bit value. Each tap advances the counter further — visible live as `Manufacturer cnt=NNNN` in the capture list sublabel.
+
+`Replay +1` works against simple-rolling-code receivers (older garage doors / gates / barriers) that accept any counter within their sync window. **It does not** bypass modern automotive immobilizers, devices with seed-based per-fob keys, or any rolling-code system with challenge-response on top.
+
+> [!warning]
+> **`Replay +1` will likely desync your original remote.** After a successful step-replay, the receiver's accepted counter has advanced past where your real fob still is — the fob will stop opening the gate until its counter catches back up. Most receivers have a resync window (press the real fob 2–8 times in a row to walk it forward) but some require a full re-pair procedure with the receiver. Don't run `Replay +1` against a gate you actually need to use unless you're prepared to resync the fob afterwards.
+
+### Keystore format
+
+Drop-in compatible with Bruce's `/mfcodes`. One line per key:
+
+```
+mf_name;hex_key;learning_type
+```
+
+- `mf_name` — free-text label shown in the Info view
+- `hex_key` — 64-bit hexadecimal manufacturer key (with or without `0x`)
+- `learning_type` — `1` for simple learning, `2` for normal learning. `type=0` entries load but stay inactive (matches Bruce — they cover proprietary algorithms like Starline/Tomohawk that the cipher pipeline can't handle without per-fob seed data).
+
+Lines starting with `#` are comments. Up to 64 keys are loaded.
+
+### Mfcodes menu item
+
+The last row of the Sub-GHz menu, **Mfcodes**, shows the current keystore state:
+
+- `Mfcodes   18 keys` — loaded
+- `Mfcodes   not loaded` — file missing or empty
+
+Tap to **reload** the keystore from storage (useful after editing the file via Web File Manager). A toast shows the load result.
+
+### .sub fields persisted
+
+Identified KeeLoq captures save the decoded fields alongside the raw key:
+
+```
+Frequency: 433920000
+Preset: 23
+Protocol: RcSwitch
+TE: 400
+Bit: 64
+Key: 0xABCDEF0123456789
+Manufacturer: NICE_Smilo
+Serial: 0x12345
+Button: 1
+Counter: 1234
+```
 
 ## Supported Modulations
 

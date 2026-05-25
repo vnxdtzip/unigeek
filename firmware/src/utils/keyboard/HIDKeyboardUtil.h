@@ -43,6 +43,27 @@
 #define KEY_F11          0xCC
 #define KEY_F12          0xCD
 
+// ── Consumer Control usage codes (HID Usage Page 0x0C) ──────────────────────
+// Sent on Report ID 3 as a single 16-bit value (LE). Zero = release.
+#define CC_PLAY_PAUSE      0x00CD
+#define CC_STOP            0x00B7
+#define CC_NEXT_TRACK      0x00B5
+#define CC_PREV_TRACK      0x00B6
+#define CC_FAST_FORWARD    0x00B3
+#define CC_REWIND          0x00B4
+#define CC_EJECT           0x00B8
+#define CC_VOLUME_UP       0x00E9
+#define CC_VOLUME_DOWN     0x00EA
+#define CC_MUTE            0x00E2
+#define CC_BRIGHTNESS_UP   0x006F
+#define CC_BRIGHTNESS_DOWN 0x0070
+#define CC_AC_HOME         0x0223
+#define CC_AC_SEARCH       0x0221
+#define CC_AL_LOCK         0x019E
+// Camera Shutter: most reliably triggered by Volume Up in the iOS/Android
+// Camera apps (the standard BT-remote trick). Aliased for clarity.
+#define CC_CAMERA_SHUTTER  CC_VOLUME_UP
+
 typedef struct {
   uint8_t modifiers;
   uint8_t reserved;
@@ -122,6 +143,20 @@ static const uint8_t kHIDReportDescriptor[] = {
   0x81, 0x06,  //     Input (Data, Var, Rel)
   0xC0,        //   End Collection
   0xC0,        // End Collection
+
+  // ── Consumer Control (Report ID 3) ────────────────────────────────────
+  0x05, 0x0C,        // Usage Page (Consumer)
+  0x09, 0x01,        // Usage (Consumer Control)
+  0xA1, 0x01,        // Collection (Application)
+  0x85, 0x03,        //   Report ID (3)
+  0x15, 0x00,        //   Logical Minimum (0)
+  0x26, 0xFF, 0x03,  //   Logical Maximum (0x03FF)
+  0x19, 0x00,        //   Usage Minimum (0)
+  0x2A, 0xFF, 0x03,  //   Usage Maximum (0x03FF)
+  0x75, 0x10,        //   Report Size (16)
+  0x95, 0x01,        //   Report Count (1)
+  0x81, 0x00,        //   Input (Data, Array, Abs)
+  0xC0,              // End Collection
 };
 
 class HIDKeyboardUtil : public Print {
@@ -141,6 +176,7 @@ public:
   virtual void end()                            = 0;
   virtual void sendReport(KeyReport* keys)      = 0;
   virtual void sendMouseReport(MouseReport* m)  {}
+  virtual void sendConsumerReport(uint16_t code){}
   virtual bool isConnected()                    { return true; }
   virtual void setBatteryLevel(uint8_t)         {}
   virtual void resetPair()                      {}
@@ -156,4 +192,7 @@ public:
 
   void mouseMove(int8_t dx, int8_t dy, int8_t wheel = 0);
   void mouseClick(uint8_t buttons);
+
+  // Send a single press/release of a Consumer Control usage code.
+  void consumerKey(uint16_t code);
 };

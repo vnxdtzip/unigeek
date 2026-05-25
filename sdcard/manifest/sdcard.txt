@@ -3,6 +3,7 @@ unigeek/hid/duckyscript/reverse_shell.txt
 unigeek/hid/duckyscript/wifi_password.txt
 unigeek/hid/duckyscript/rick_roll.txt
 unigeek/hid/duckyscript/disable_defender.txt
+unigeek/hid/duckyscript/ducky3_demo.txt
 unigeek/qrcode/rickroll.txt
 unigeek/qrcode/wifi_example.txt
 unigeek/qrcode/contact.txt
@@ -31,6 +32,7 @@ unigeek/web/portals/dns_config
 unigeek/web/portals/default/index.html
 unigeek/nfc/dictionaries/default.txt
 unigeek/nfc/dictionaries/extended.txt
+unigeek/mfcodes
 unigeek/nfc/dumps/sample_1k_DEADBEEF.bin
 unigeek/nfc/dumps/sample_1k_CAFEBABE.bin
 unigeek/nfc/dumps/sample_mini_12345678.bin

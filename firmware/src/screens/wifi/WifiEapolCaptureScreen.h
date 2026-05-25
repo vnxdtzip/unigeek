@@ -106,16 +106,54 @@ private:
   unsigned long _discoveryDwellMs = 1000;    // ms per channel during discovery scan
   unsigned long _attackDwellMs    = 8000;  // ms to stay on channel after deauth
 
+  // ── Menu action ids (shared by _showMenu builder and onItemSelected dispatch) ─
+  enum ActionId : uint8_t {
+    ACT_MODE = 0,
+    ACT_TARGET_WIFI,
+    ACT_DISCOVERY_DWELL,
+    ACT_ATTACK_DWELL,
+    ACT_MAX_DEAUTH,
+    ACT_START,
+  };
+
+  // Sentinel for _chanDwellUntil meaning "do not fire any more deauths"
+  // (Target mode after handshake captured or timeout reached).
+  static constexpr unsigned long kStopFiring = ULONG_MAX;
+
+  // ── Mode (single AP vs every visible AP) ─────────────────────────────────
+  enum Mode { MODE_TARGET, MODE_ALL };
+  Mode  _mode = MODE_TARGET;
+
+  struct Target {
+    String  ssid    = "-";
+    uint8_t bssid[6] = {};
+    int     channel = 0;
+  };
+  Target _target;
+
   // ── Scan phase ────────────────────────────────────────────────────────────
-  enum Phase { PHASE_MENU, PHASE_DISCOVERY, PHASE_ATTACK };
+  enum Phase { PHASE_MENU, PHASE_SELECT_WIFI, PHASE_DISCOVERY, PHASE_ATTACK };
   Phase         _phase            = PHASE_MENU;
 
   // ── Menu items ────────────────────────────────────────────────────────────
-  ListItem      _menuItems[4]     = {};
+  static constexpr int MAX_MENU = 5;
+  ListItem      _menuItems[MAX_MENU] = {};
+  uint8_t       _menuCount       = 0;
+  uint8_t       _menuMap[MAX_MENU] = {};   // each entry → action id (see _showMenu)
+  String        _modeSub;
+  String        _targetSub;
   String        _discoverySub;
   String        _attackSub;
   String        _deauthSub;
   void          _showMenu();
+  void          _selectWifi();
+
+  // ── Network scan list ────────────────────────────────────────────────────
+  static constexpr int MAX_SCAN = 20;
+  ListItem _scanItems[MAX_SCAN];
+  char     _scanLabels[MAX_SCAN][52];
+  char     _scanValues[MAX_SCAN][18];
+  int      _scanCount = 0;
   int           _discoveryCount   = 0;    // channels scanned in current discovery pass
   uint8_t       _attackChans[13]  = {};   // unique channels with APs needing EAPOL
   int           _attackChanCount  = 0;

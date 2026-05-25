@@ -184,6 +184,7 @@ public:
       { 115, "kbd_ducky_5",               "Macro Maestro",          3, 2, "Execute 5 DuckyScript payloads" },
       { 116, "kbd_ducky_10",              "Automation God",         3, 3, "Execute 10 DuckyScript payloads" },
       { 231, "hid_mouse_jiggle",          "Wiggle Wiggle",          3, 0, "Run HID mouse jiggle for the first time" },
+      { 252, "hid_media_first",           "Remote Control",         3, 0, "Send a media or camera-shutter HID key" },
       { 232, "webauthn_first_use",        "Key in Hand",            3, 0, "Open the WebAuthn / FIDO2 screen for the first time" },
       { 233, "webauthn_first_passkey",    "Passkey Pioneer",        3, 1, "Authorize your first WebAuthn registration or login" },
       { 235, "pwd_mgr_unlock",            "Vault Opener",           3, 0, "Unlock the Password Manager for the first time" },

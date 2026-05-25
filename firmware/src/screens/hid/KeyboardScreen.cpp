@@ -119,11 +119,15 @@ void KeyboardScreen::onRender()
 
 void KeyboardScreen::onItemSelected(uint8_t index)
 {
+  if (_state == STATE_MEDIA_MENU) {
+    _sendMediaItem(index);
+    return;
+  }
   if (_state != STATE_MENU && _state != STATE_SELECT_FILE) return;
 
   if (_state == STATE_MENU) {
     // Resolve which item was actually selected
-    // Items are: [Keyboard (HAS_KEYBOARD)?], Ducky Script, Mouse Jiggle, Password Manager, [Reset Pair (BLE)?]
+    // Items are: [Keyboard (HAS_KEYBOARD)?], Ducky Script, Mouse Jiggle, Media / Camera, Password Manager, [Reset Pair (BLE)?]
     uint8_t idx = 0;
 #ifdef DEVICE_HAS_KEYBOARD
     if (index == idx++) {
@@ -147,6 +151,11 @@ void KeyboardScreen::onItemSelected(uint8_t index)
     if (index == idx++) {
       // Mouse Jiggle
       _goMouseJiggle();
+      return;
+    }
+    if (index == idx++) {
+      // Media / Camera
+      _goMediaMenu();
       return;
     }
     if (index == idx++) {
@@ -178,12 +187,17 @@ void KeyboardScreen::onItemSelected(uint8_t index)
 void KeyboardScreen::onBack()
 {
   if (_state == STATE_SELECT_FILE) {
-    int slash = _curPath.lastIndexOf('/');
-    if (slash > 0 && _curPath != kDuckyBase) {
-      _showFiles(_curPath.substring(0, slash));
-    } else {
+    // Clamp at kDuckyBase — don't let the picker climb above /unigeek/hid/duckyscript
+    // into the rest of the SD card.
+    if (_curPath == kDuckyBase || _curPath.length() == 0) {
       _goMenu();
+      return;
     }
+    int slash = _curPath.lastIndexOf('/');
+    String parent = (slash > 0) ? _curPath.substring(0, slash) : kDuckyBase;
+    _showFiles(parent);
+  } else if (_state == STATE_MEDIA_MENU) {
+    _goMenu();
   } else {
     Screen.goBack();
   }
@@ -206,6 +220,7 @@ void KeyboardScreen::_goMenu()
 #endif
   _menuItems[_menuCount++] = {"Ducky Script", nullptr};
   _menuItems[_menuCount++] = {"Mouse Jiggle", nullptr};
+  _menuItems[_menuCount++] = {"Media / Camera", nullptr};
   _menuItems[_menuCount++] = {"Password Manager", nullptr};
   if (_mode == MODE_BLE)
     _menuItems[_menuCount++] = {"Reset Pair", nullptr};
@@ -241,6 +256,9 @@ void KeyboardScreen::_showFiles(const String& path)
 
   _curPath = path;
   _state   = STATE_SELECT_FILE;
+  // ".." only below the screen's root — _browser.root clamps the parent
+  // entry so the picker can never escape /unigeek/hid/duckyscript.
+  _browser.root = kDuckyBase;
   uint8_t n = _browser.load(this, path);
 
   if (n == 0) {
@@ -273,19 +291,17 @@ void KeyboardScreen::_runDuckyScript(const String& path)
   }
 
   DuckScriptUtil ducky(_keyboard);
-  int start = 0;
-  while (start < (int)content.length()) {
-    int end  = content.indexOf('\n', start);
-    if (end < 0) end = content.length();
-    String line = content.substring(start, end);
-    line.trim();
-    start = end + 1;
-    if (line.isEmpty()) continue;
-
-    bool ok = ducky.runCommand(line);
-    _addScriptLine(line, ok);
-    render();
-  }
+  ducky.runScript(content, [this](const String& line, bool ok) -> bool {
+    if (line.length() > 0) {
+      _addScriptLine(line, ok);
+      render();
+    }
+    if (Uni.Nav->wasPressed()) {
+      auto dir = Uni.Nav->readDirection();
+      if (dir == INavigation::DIR_BACK || dir == INavigation::DIR_PRESS) return false;
+    }
+    return true;
+  });
 }
 
 void KeyboardScreen::_addScriptLine(const String& text, bool ok)
@@ -509,4 +525,59 @@ void KeyboardScreen::_renderMouseJiggle()
 
   sp.pushSprite(bodyX(), pushY);
   sp.deleteSprite();
+}
+
+// ── Media / Consumer Control submenu ────────────────────────────────────────
+
+namespace {
+  struct MediaAction {
+    const char* label;
+    uint16_t    code;
+  };
+  // Order must match KeyboardScreen::kMediaCount.
+  constexpr MediaAction kMediaActions[] = {
+    {"Camera Shutter",  CC_CAMERA_SHUTTER},
+    {"Play / Pause",    CC_PLAY_PAUSE},
+    {"Next Track",      CC_NEXT_TRACK},
+    {"Previous Track",  CC_PREV_TRACK},
+    {"Stop",            CC_STOP},
+    {"Fast Forward",    CC_FAST_FORWARD},
+    {"Rewind",          CC_REWIND},
+    {"Volume Up",       CC_VOLUME_UP},
+    {"Volume Down",     CC_VOLUME_DOWN},
+    {"Mute",            CC_MUTE},
+    {"Brightness Up",   CC_BRIGHTNESS_UP},
+    {"Brightness Down", CC_BRIGHTNESS_DOWN},
+    {"Lock Screen",     CC_AL_LOCK},
+    {"Eject",           CC_EJECT},
+  };
+  static_assert(sizeof(kMediaActions) / sizeof(kMediaActions[0]) == 14,
+                "kMediaActions size must match KeyboardScreen::kMediaCount");
+}
+
+void KeyboardScreen::_goMediaMenu()
+{
+  _state = STATE_MEDIA_MENU;
+  for (uint8_t i = 0; i < kMediaCount; i++) {
+    _mediaItems[i] = {kMediaActions[i].label, nullptr};
+  }
+  setItems(_mediaItems, kMediaCount);
+}
+
+void KeyboardScreen::_sendMediaItem(uint8_t index)
+{
+  if (index >= kMediaCount) return;
+  if (!_keyboard->isConnected() && _mode == MODE_BLE) {
+    ShowStatusAction::show("Not connected...", 1500);
+    render();
+    return;
+  }
+  _keyboard->consumerKey(kMediaActions[index].code);
+
+  int n = Achievement.inc("hid_media_first");
+  if (n == 1) Achievement.unlock("hid_media_first");
+
+  String msg = String("Sent: ") + kMediaActions[index].label;
+  ShowStatusAction::show(msg.c_str(), 800);
+  render();
 }

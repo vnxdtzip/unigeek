@@ -14,6 +14,7 @@ public:
   void end()                              override;
   void sendReport(KeyReport* keys)        override;
   void sendMouseReport(MouseReport* m)    override;
+  void sendConsumerReport(uint16_t code)  override;
 
   // USBHIDDevice callbacks
   uint16_t _onGetDescriptor(uint8_t* buffer) override;

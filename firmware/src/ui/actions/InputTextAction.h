@@ -119,8 +119,8 @@ private:
         "jkl5",  "mno6",  "pqrs7", "tuv8",  "wxyz9",
       };
       static constexpr const char* symbolLabels[] = {
-        " ",     ",.'- ", "*/@",   "+-=",   ":;?",
-        "!$#",   "\"&%",  "()[]",  "<>{}",  "^~`",
+        " ",     ",.'- ", "*/\\@", "+-=_",  ":;?",
+        "!$#",   "\"&%|", "()[]",  "<>{}",  "^~`",
       };
 
       const char* const* sets = _symbolMode ? symbolLabels : charLabels;

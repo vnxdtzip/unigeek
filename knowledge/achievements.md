@@ -179,6 +179,7 @@ If no title has been set, it shows `[RANK] No Title` by default.
 | Macro Maestro | HID | Gold | 600 |
 | Automation God | HID | Platinum | 1000 |
 | Wiggle Wiggle | HID | Bronze | 100 |
+| Remote Control | HID | Bronze | 100 |
 | Key in Hand | HID | Bronze | 100 |
 | Passkey Pioneer | HID | Silver | 300 |
 | Vault Opener | HID | Bronze | 100 |

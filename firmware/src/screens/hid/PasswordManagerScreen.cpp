@@ -1,4 +1,5 @@
 #include "PasswordManagerScreen.h"
+#include <Arduino.h>  // pulls pins_arduino.h so DEVICE_HAS_WEBAUTHN is defined
 #include "core/Device.h"
 #include "core/INavigation.h"
 #include "core/IStorage.h"
@@ -12,7 +13,12 @@
 #include "ui/actions/InputNumberAction.h"
 #include "ui/actions/ShowStatusAction.h"
 #include <mbedtls/sha256.h>
+#include <mbedtls/md.h>
 #include <string.h>
+
+#ifdef DEVICE_HAS_WEBAUTHN
+#include "utils/webauthn/CredentialStore.h"
+#endif
 
 // ── Constructor ─────────────────────────────────────────────────────────────
 
@@ -91,45 +97,63 @@ void PasswordManagerScreen::onRender()
 void PasswordManagerScreen::onItemSelected(uint8_t index)
 {
   if (_state == STATE_ADD) {
-    switch (index) {
-      case 0: {
-        String v = InputTextAction::popup("Label", _pendingLabel.c_str());
-        if (!InputTextAction::wasCancelled()) _pendingLabel = v;
+    // Index layout depends on whether the Source row is present.
+    // With webauthn:    0=Label 1=Source 2=Type 3=Case 4=Length 5=Save
+    // Without webauthn: 0=Label         1=Type 2=Case 3=Length 4=Save
+#ifdef DEVICE_HAS_WEBAUTHN
+    constexpr uint8_t IDX_LABEL = 0, IDX_SOURCE = 1, IDX_TYPE = 2,
+                      IDX_CASE = 3, IDX_LEN = 4, IDX_SAVE = 5;
+#else
+    constexpr uint8_t IDX_LABEL = 0, IDX_TYPE = 1, IDX_CASE = 2,
+                      IDX_LEN = 3, IDX_SAVE = 4;
+    constexpr uint8_t IDX_SOURCE = 0xFF;  // never matches
+#endif
+
+    if (index == IDX_LABEL) {
+      String v = InputTextAction::popup("Label", _pendingLabel.c_str());
+      if (!InputTextAction::wasCancelled()) _pendingLabel = v;
+      _updateAddLabels(); render();
+    } else if (index == IDX_SOURCE) {
+      if (!_waMasterAvailable()) {
+        ShowStatusAction::show("Run Utility > Manage WebAuthn > BIP39 Generate", 2200);
+        _pendingSource = SRC_LEGACY;
         _updateAddLabels(); render();
-        break;
+        return;
       }
-      case 1: {
-        static constexpr InputSelectAction::Option typeOpts[] = {
-          {"Alphanumeric (letters+digits)", "0"},
-          {"Alphabet only (letters)",       "1"},
-          {"Alphanumeric + Symbols",        "2"},
-        };
-        const char* r = InputSelectAction::popup("Password Type", typeOpts, 3,
-                          String(_pendingType).c_str());
-        if (r) _pendingType = (uint8_t)atoi(r);
-        _updateAddLabels(); render();
-        break;
-      }
-      case 2: {
-        static constexpr InputSelectAction::Option caseOpts[] = {
-          {"Lower case (a-z)", "0"},
-          {"Upper case (A-Z)", "1"},
-          {"Mixed case (A-Za-z)", "2"},
-        };
-        const char* r = InputSelectAction::popup("Case", caseOpts, 3,
-                          String(_pendingCase).c_str());
-        if (r) _pendingCase = (uint8_t)atoi(r);
-        _updateAddLabels(); render();
-        break;
-      }
-      case 3: {
-        int v = InputNumberAction::popup("Length (8-34)", 8, 34, _pendingLen);
-        if (!InputNumberAction::wasCancelled()) _pendingLen = (uint8_t)v;
-        _updateAddLabels(); render();
-        break;
-      }
-      case 4: _saveEntry(); break;
-      default: break;
+      static constexpr InputSelectAction::Option srcOpts[] = {
+        {"Local (master pw only)",     "0"},
+        {"WebAuthn (pw + master.bin)", "1"},
+      };
+      const char* r = InputSelectAction::popup("Source", srcOpts, 2,
+                        String(_pendingSource).c_str());
+      if (r) _pendingSource = (uint8_t)atoi(r);
+      _updateAddLabels(); render();
+    } else if (index == IDX_TYPE) {
+      static constexpr InputSelectAction::Option typeOpts[] = {
+        {"Alphanumeric (letters+digits)", "0"},
+        {"Alphabet only (letters)",       "1"},
+        {"Alphanumeric + Symbols",        "2"},
+      };
+      const char* r = InputSelectAction::popup("Password Type", typeOpts, 3,
+                        String(_pendingType).c_str());
+      if (r) _pendingType = (uint8_t)atoi(r);
+      _updateAddLabels(); render();
+    } else if (index == IDX_CASE) {
+      static constexpr InputSelectAction::Option caseOpts[] = {
+        {"Lower case (a-z)", "0"},
+        {"Upper case (A-Z)", "1"},
+        {"Mixed case (A-Za-z)", "2"},
+      };
+      const char* r = InputSelectAction::popup("Case", caseOpts, 3,
+                        String(_pendingCase).c_str());
+      if (r) _pendingCase = (uint8_t)atoi(r);
+      _updateAddLabels(); render();
+    } else if (index == IDX_LEN) {
+      int v = InputNumberAction::popup("Length (8-34)", 8, 34, _pendingLen);
+      if (!InputNumberAction::wasCancelled()) _pendingLen = (uint8_t)v;
+      _updateAddLabels(); render();
+    } else if (index == IDX_SAVE) {
+      _saveEntry();
     }
     return;
   }
@@ -239,14 +263,15 @@ void PasswordManagerScreen::_loadVault()
     uint8_t recLen = 0;
     if (f.read(&recLen, 1) != 1 || recLen == 0) break;
 
-    uint8_t enc[64] = {};
+    uint8_t enc[80] = {};
     if (recLen > sizeof(enc) || (size_t)f.read(enc, recLen) != recLen) break;
 
-    uint8_t dec[64] = {};
+    uint8_t dec[80] = {};
     _xorCrypt(enc, recLen, dec);
     dec[recLen] = '\0';
 
-    // format: label|type|caseMode|length
+    // format: label|type|caseMode|length[|source]
+    // pre-2026-05 vaults omit |source — treat as SRC_LEGACY.
     char*   s  = (char*)dec;
     char*   p1 = strchr(s, '|');
     if (!p1) continue;
@@ -254,11 +279,14 @@ void PasswordManagerScreen::_loadVault()
     if (!p2) continue;
     char*   p3 = strchr(p2 + 1, '|');
     if (!p3) continue;
+    char*   p4 = strchr(p3 + 1, '|');  // optional
 
     *p1 = *p2 = *p3 = '\0';
+    if (p4) *p4 = '\0';
     uint8_t typ = (uint8_t)atoi(p1 + 1);
     uint8_t cm  = (uint8_t)atoi(p2 + 1);
     uint8_t len = (uint8_t)atoi(p3 + 1);
+    uint8_t src = p4 ? (uint8_t)atoi(p4 + 1) : SRC_LEGACY;
 
     if (strlen(s) == 0 || len < 8 || len > 34 || typ > 2) continue;
 
@@ -267,6 +295,7 @@ void PasswordManagerScreen::_loadVault()
     _entries[_entryCount].type     = typ;
     _entries[_entryCount].caseMode = cm < 3 ? cm : 0;
     _entries[_entryCount].length   = len;
+    _entries[_entryCount].source   = (src == SRC_WEBAUTHN) ? SRC_WEBAUTHN : SRC_LEGACY;
     _entryCount++;
   }
   f.close();
@@ -281,9 +310,10 @@ void PasswordManagerScreen::_saveVault()
     String  plain   = String(_entries[i].label)    + "|" +
                       String(_entries[i].type)     + "|" +
                       String(_entries[i].caseMode) + "|" +
-                      String(_entries[i].length);
+                      String(_entries[i].length)   + "|" +
+                      String(_entries[i].source);
     uint8_t recLen  = (uint8_t)plain.length();
-    uint8_t enc[64] = {};
+    uint8_t enc[80] = {};
     _xorCrypt((const uint8_t*)plain.c_str(), recLen, enc);
     f.write(&recLen, 1);
     f.write(enc, recLen);
@@ -307,18 +337,25 @@ void PasswordManagerScreen::_reloadMenu()
 
 void PasswordManagerScreen::_enterAdd()
 {
-  _pendingLabel = "";
-  _pendingType  = 0;
-  _pendingCase  = 0;
-  _pendingLen   = 16;
+  _pendingLabel  = "";
+  _pendingType   = 0;
+  _pendingCase   = 0;
+  _pendingLen    = 16;
+  _pendingSource = _waMasterAvailable() ? SRC_WEBAUTHN : SRC_LEGACY;
   _updateAddLabels();
-  _addItems[0] = { "Label",  _addLblBuf };
-  _addItems[1] = { "Type",   _addTypeBuf };
-  _addItems[2] = { "Case",   _addCaseBuf };
-  _addItems[3] = { "Length", _addLenBuf };
-  _addItems[4] = { "Save",   nullptr };
+
+  uint8_t n = 0;
+  _addItems[n++] = { "Label",  _addLblBuf };
+#ifdef DEVICE_HAS_WEBAUTHN
+  _addItems[n++] = { "Source", _addSrcBuf };
+#endif
+  _addItems[n++] = { "Type",   _addTypeBuf };
+  _addItems[n++] = { "Case",   _addCaseBuf };
+  _addItems[n++] = { "Length", _addLenBuf };
+  _addItems[n++] = { "Save",   nullptr };
+
   _state = STATE_ADD;
-  setItems(_addItems, 5);
+  setItems(_addItems, n);
   render();
 }
 
@@ -346,6 +383,10 @@ void PasswordManagerScreen::_updateAddLabels()
   _addCaseBuf[sizeof(_addCaseBuf) - 1] = '\0';
 
   snprintf(_addLenBuf, sizeof(_addLenBuf), "%d", _pendingLen);
+
+  const char* srcLabel = (_pendingSource == SRC_WEBAUTHN) ? "WebAuthn" : "Local";
+  strncpy(_addSrcBuf, srcLabel, sizeof(_addSrcBuf) - 1);
+  _addSrcBuf[sizeof(_addSrcBuf) - 1] = '\0';
 }
 
 void PasswordManagerScreen::_saveEntry()
@@ -365,6 +406,7 @@ void PasswordManagerScreen::_saveEntry()
   _entries[_entryCount].type     = _pendingType;
   _entries[_entryCount].caseMode = _pendingCase;
   _entries[_entryCount].length   = _pendingLen;
+  _entries[_entryCount].source   = _pendingSource;
   _entryCount++;
   _saveVault();
 
@@ -381,7 +423,16 @@ void PasswordManagerScreen::_saveEntry()
 void PasswordManagerScreen::_enterView(uint8_t index)
 {
   _viewIdx = index;
-  _generatePassword(_entries[index], _viewPw, sizeof(_viewPw) - 1);
+  if (!_generatePassword(_entries[index], _viewPw, sizeof(_viewPw) - 1)) {
+#ifdef DEVICE_HAS_WEBAUTHN
+    ShowStatusAction::show("WebAuthn master missing", 1500);
+#else
+    ShowStatusAction::show("WebAuthn not supported on this board", 2200);
+#endif
+    _reloadMenu();
+    render();
+    return;
+  }
   _state = STATE_VIEW;
   _viewFirstRender = true;
   render();
@@ -400,6 +451,7 @@ void PasswordManagerScreen::_showEntryOptions(uint8_t index)
     _enterView(index);
   } else if (strcmp(r, "type") == 0) {
     _enterView(index);
+    if (_state != STATE_VIEW) return;  // _enterView aborted (e.g. webauthn master missing)
     _typePassword();
     render();
   } else if (strcmp(r, "delete") == 0) {
@@ -523,7 +575,7 @@ void PasswordManagerScreen::_renderView()
 
 // ── Password generation ──────────────────────────────────────────────────────
 
-void PasswordManagerScreen::_generatePassword(const Entry& e, char* out, uint8_t maxLen)
+bool PasswordManagerScreen::_generatePassword(const Entry& e, char* out, uint8_t maxLen)
 {
   // [type 0-2][case 0=lower 1=upper 2=mixed]
   static const char* charsets[3][3] = {
@@ -546,19 +598,46 @@ void PasswordManagerScreen::_generatePassword(const Entry& e, char* out, uint8_t
   uint8_t     csLen   = (uint8_t)strlen(charset);
   uint8_t     len     = e.length < maxLen ? e.length : maxLen;
 
+  uint8_t waKey[32] = {};
+  bool    useWa     = false;
+  if (e.source == SRC_WEBAUTHN) {
+#ifdef DEVICE_HAS_WEBAUTHN
+    if (webauthn::CredentialStore::hasMaster() &&
+        webauthn::CredentialStore::getMasterKey(waKey)) {
+      useWa = true;
+    } else {
+      return false;
+    }
+#else
+    return false;
+#endif
+  }
+
   String  seed = String(_masterPw) + "|" + String(e.label) + "|" +
                  String(e.type)    + "|" + String(e.caseMode) + "|" + String(e.length);
   uint8_t hash[32];
-  _sha256str(seed, hash);
+  if (useWa) {
+    _hmacSha256(waKey, 32, (const uint8_t*)seed.c_str(), seed.length(), hash);
+  } else {
+    _sha256str(seed, hash);
+  }
 
   for (uint8_t i = 0; i < len; i++) {
     if (i > 0 && (i % 32) == 0) {
       String nextSeed = seed + "|" + String(i / 32);
-      _sha256str(nextSeed, hash);
+      if (useWa) {
+        _hmacSha256(waKey, 32, (const uint8_t*)nextSeed.c_str(),
+                    nextSeed.length(), hash);
+      } else {
+        _sha256str(nextSeed, hash);
+      }
     }
     out[i] = charset[hash[i % 32] % csLen];
   }
   out[len] = '\0';
+
+  if (useWa) memset(waKey, 0, sizeof(waKey));
+  return true;
 }
 
 // ── Crypto helpers ───────────────────────────────────────────────────────────
@@ -576,6 +655,23 @@ void PasswordManagerScreen::_sha256(const uint8_t* data, size_t len, uint8_t out
 void PasswordManagerScreen::_sha256str(const String& s, uint8_t out[32])
 {
   _sha256((const uint8_t*)s.c_str(), s.length(), out);
+}
+
+void PasswordManagerScreen::_hmacSha256(const uint8_t* key, size_t keyLen,
+                                        const uint8_t* data, size_t dataLen,
+                                        uint8_t out[32])
+{
+  mbedtls_md_hmac(mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),
+                  key, keyLen, data, dataLen, out);
+}
+
+bool PasswordManagerScreen::_waMasterAvailable()
+{
+#ifdef DEVICE_HAS_WEBAUTHN
+  return webauthn::CredentialStore::hasMaster();
+#else
+  return false;
+#endif
 }
 
 void PasswordManagerScreen::_xorCrypt(const uint8_t* in, size_t len, uint8_t* out)

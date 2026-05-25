@@ -15,6 +15,16 @@ public:
   static constexpr uint16_t MAX_RAW_LEN   = 2048;
   static constexpr int     RSSI_THRESHOLD = -65;  // dBm — signal detected above this
 
+  // Receive filter — applied by pollReceive().
+  //   RX_FILTER_CODE: only emit RCSwitch-decoded signals (one of the 23 known
+  //                   protocols). Drop everything else. Reduces noise/duplicates.
+  //   RX_FILTER_RAW : emit RCSwitch-decoded signals AND raw pulse streams that
+  //                   no protocol matched. Captures everything (default).
+  enum RxFilter {
+    RX_FILTER_CODE,
+    RX_FILTER_RAW,
+  };
+
   struct Signal {
     float frequency = 0;     // MHz
     String preset = "0";     // modulation preset name or RcSwitch protocol number
@@ -25,6 +35,18 @@ public:
     uint64_t key = 0;         // decoded key value
     int te = 0;               // timing element / pulse length in µs
     int bit = 0;              // number of data bits
+
+    // KeeLoq fields — populated by KeeloqUtil::unpack() / identify() when
+    // protocol == "RcSwitch" and preset == "23". When no manufacturer key
+    // matches, mf_name stays empty but fix/encrypted/btn/serial are still
+    // valid (derived purely from the captured value, no keystore lookup).
+    String   mf_name;         // "" if unidentified or non-KeeLoq
+    uint32_t serial    = 0;
+    uint8_t  btn       = 0;
+    uint16_t cnt       = 0;
+    uint32_t fix       = 0;
+    uint32_t encrypted = 0;
+    uint32_t hop       = 0;   // decrypted plaintext (only set when identified)
   };
 
   // Initialize CC1101 with CS and GDO0 pins.
@@ -46,6 +68,9 @@ public:
   bool beginReceive();
   bool pollReceive(Signal& out);
   void endReceive();
+
+  void     setRxFilter(RxFilter f) { _rxFilter = f; }
+  RxFilter getRxFilter() const     { return _rxFilter; }
 
   // Non-blocking frequency scan:
   //   1. call beginScan() once when entering scan state
@@ -78,8 +103,11 @@ public:
   static bool loadFile(const String& content, Signal& out);
   static String saveToString(const Signal& sig);
 
-  // Display helper
+  // Display helpers
   static String signalLabel(const Signal& sig);
+  // Multi-line, key:value info block (mirrors Bruce's `display_signal_data`).
+  // Ready to feed into TextScrollView::setContent.
+  static String signalInfoText(const Signal& sig);
 
 private:
   int8_t _csPin = -1;
@@ -88,6 +116,7 @@ private:
   bool   _initialized = false;
 
   RCSwitchUtil _sw;  // persistent receiver state for non-blocking polling
+  RxFilter     _rxFilter = RX_FILTER_CODE;
 
   // Scan status (updated during receive/scan)
   bool    _scanning = false;

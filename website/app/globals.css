@@ -1494,6 +1494,47 @@ button { font: inherit; color: inherit; background: transparent; border: 0; }
   color: var(--accent);
 }
 
+.version-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.version-select {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-elev);
+  color: var(--ink);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: all .15s;
+}
+.version-select:hover { border-color: var(--line-strong); }
+.version-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.version-note {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--amber);
+  background: var(--amber-dim);
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+}
+
 .board-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -1543,6 +1584,27 @@ button { font: inherit; color: inherit; background: transparent; border: 0; }
   display: flex; flex-wrap: wrap; gap: 4px;
 }
 .board-card.selected .board-card-chip { border-color: var(--accent); color: var(--accent); }
+.board-card.unsupported {
+  opacity: 0.35;
+  cursor: not-allowed;
+  background: var(--bg-elev);
+}
+.board-card.unsupported:hover {
+  background: var(--bg-elev);
+  border-color: var(--line);
+}
+.board-card-badge {
+  position: absolute;
+  top: 10px; right: 10px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  color: var(--ink-muted);
+  background: var(--bg);
+}
 
 .methods {
   display: grid;
