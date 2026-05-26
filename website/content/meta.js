@@ -10,7 +10,7 @@ export const FIRMWARE_CHANNEL = 'stable';
 // with CORS headers. Same source for every version (latest + archive). Override
 // at build time with NEXT_PUBLIC_FIRMWARE_PROXY if you need to point elsewhere.
 export const FIRMWARE_PROXY = (
-  process.env.NEXT_PUBLIC_FIRMWARE_PROXY || 'https://bin.unigeek.xid.run'
+  process.env.NEXT_PUBLIC_FIRMWARE_PROXY || 'https://bin-unigeek.xid.run'
 ).replace(/\/+$/, '');
 export const BUILD_ID = '20260421';
 export const COPYRIGHT_YEAR = 2026;

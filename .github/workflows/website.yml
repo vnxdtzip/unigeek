@@ -1,0 +1,59 @@
+name: Update Website
+
+# Website-only deploys, decoupled from firmware releases. Tag format:
+#   <version>-web-<n>   e.g. 1.8.2-web-1, 1.8.2-web-2, 1.8-web-1
+# The `-web-<n>` suffix is stripped before building so the flasher still
+# points at the real firmware release (1.8.2). Bump <n> to re-deploy the
+# site against the same firmware version without retagging a release.
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+-web-[0-9]+'
+      - '[0-9]+.[0-9]+.[0-9]+-web-[0-9]+'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build-website:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Derive firmware version
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME%-web-*}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build website
+        working-directory: website
+        env:
+          NEXT_PUBLIC_FIRMWARE_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/build
+
+  deploy-pages:
+    runs-on: ubuntu-latest
+    needs: build-website
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
