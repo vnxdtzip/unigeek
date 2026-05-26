@@ -31,6 +31,17 @@ const STATUS_COLOR = {
   ERROR: 'var(--danger)',
 };
 
+function trackInstall(action, board, firmwareVersion, method) {
+  if (typeof window === 'undefined' || typeof window.gtag !== 'function') return;
+  window.gtag('event', action, {
+    board_id: board.id,
+    board_name: board.name,
+    chip: board.chip,
+    fw_version: firmwareVersion,
+    method,
+  });
+}
+
 function arrayBufferToBinaryString(buffer) {
   const bytes = new Uint8Array(buffer);
   let binary = '';
@@ -158,6 +169,7 @@ export default function Flasher({ board, firmwareVersion, method, methodInfo, bi
       logHtml(`  resetting board ............. <span class="ok">ok</span>`);
       logHtml('');
       logHtml(`<span class="ok">✓ Flash complete.</span> Unplug and reconnect your ${board.name}.`);
+      trackInstall('install', board, firmwareVersion, method);
       setStatus(STATUS.DONE);
       setProgressLabel('Complete');
       setProgress(100);
@@ -208,6 +220,7 @@ export default function Flasher({ board, firmwareVersion, method, methodInfo, bi
             className="flash-button-big"
             href={downloadUrl}
             download
+            onClick={() => trackInstall('download', board, firmwareVersion, method)}
             style={{ textDecoration: 'none' }}
           >
             Download .bin
@@ -231,7 +244,12 @@ export default function Flasher({ board, firmwareVersion, method, methodInfo, bi
         )}
 
         <div className="alt-links">
-          <a className="alt-link" href={downloadUrl} download>
+          <a
+            className="alt-link"
+            href={downloadUrl}
+            download
+            onClick={() => trackInstall('download', board, firmwareVersion, method)}
+          >
             <span>Download .bin directly</span><span className="arr">↓</span>
           </a>
           {status === STATUS.DONE || status === STATUS.ERROR ? (
