@@ -532,6 +532,12 @@ Return the raw screen coordinates of the most recent touch contact, or `-1` when
 
 ---
 
+### `nav.hasTouch()` → bool
+
+Return `true` on boards that have a touch screen, `false` on button / stick / keyboard boards. Use this to branch your UI up front (draw tap targets vs. a button-driven menu) instead of inferring touch from a `-1` `nav.touchX()`. The value is fixed per board — it reflects hardware capability, not whether a finger is currently down.
+
+---
+
 ### `nav.isTouched()` → bool
 
 Return `true` while a finger is currently in contact with the screen. Goes back to `false` on lift. Always `false` on boards without touch.
@@ -1002,6 +1008,7 @@ nav.btn()               -- returns one string per consumed press:
 nav.touchX()            -- last touch X in pixels, or -1 if no touch / non-touch board
 nav.touchY()            -- last touch Y in pixels, or -1 if no touch / non-touch board
 nav.isTouched()         -- true while a finger is currently down
+nav.hasTouch()          -- true if the board has a touch screen (fixed per board)
 
 ### Display  (require "uni.lcd" first; all coordinates in pixels, origin top-left)
 lcd.w()                 -- screen width (number)
