@@ -301,8 +301,10 @@ void LuaEngine::_registerBindings() {
   lua_pushcfunction(_lua, _uni_debug);  lua_setfield(_lua, -2, "debug");
   lua_pushcfunction(_lua, _uni_delay);  lua_setfield(_lua, -2, "delay");
   lua_pushcfunction(_lua, _uni_heap);   lua_setfield(_lua, -2, "heap");
-  lua_pushcfunction(_lua, _uni_millis); lua_setfield(_lua, -2, "millis");
-  lua_pushcfunction(_lua, _uni_beep);   lua_setfield(_lua, -2, "beep");
+  lua_pushcfunction(_lua, _uni_millis);   lua_setfield(_lua, -2, "millis");
+  lua_pushcfunction(_lua, _uni_beep);     lua_setfield(_lua, -2, "beep");
+  lua_pushcfunction(_lua, _uni_useTouch); lua_setfield(_lua, -2, "useTouch");
+  lua_pushcfunction(_lua, _uni_useNav);   lua_setfield(_lua, -2, "useNav");
   lua_setglobal(_lua, "uni");
 
   // Register lazy loaders — tables are built only when require() is called
@@ -414,6 +416,25 @@ int LuaEngine::_uni_beep(lua_State* L) {
   int freq = (int)luaL_checknumber(L, 1);
   int ms   = (int)luaL_checknumber(L, 2);
   if (Uni.Speaker) Uni.Speaker->tone(freq, ms);
+#endif
+  return 0;
+}
+
+// uni.useTouch() / uni.useNav() — hand raw touch to the script, or give nav
+// back. Touch boards only: suppressing keys hides the touch-nav overlay so the
+// script owns the whole screen; on button-only boards this would just trap the
+// user (and on keyboard boards it would also gate the keyboard), so it's a
+// no-op there. The runner re-enables nav automatically when the script exits.
+int LuaEngine::_uni_useTouch(lua_State* L) {
+#if defined(DEVICE_HAS_TOUCH) || defined(DEVICE_HAS_TOUCH_NAV)
+  if (Uni.Nav) Uni.Nav->setSuppressKeys(true);
+#endif
+  return 0;
+}
+
+int LuaEngine::_uni_useNav(lua_State* L) {
+#if defined(DEVICE_HAS_TOUCH) || defined(DEVICE_HAS_TOUCH_NAV)
+  if (Uni.Nav) Uni.Nav->setSuppressKeys(false);
 #endif
   return 0;
 }

@@ -187,6 +187,51 @@ uni.beep(150,  120)  -- collision thud
 
 ---
 
+### `uni.useTouch()` / `uni.useNav()`
+
+Touch boards only. `uni.useTouch()` hands the **whole screen** to the script: it hides the firmware's touch-nav overlay (the coloured edge zones that map taps to up/down/ok/back) so the script can use `nav.touchX()` / `nav.touchY()` / `nav.isTouched()` over the full display without the nav guides painted on top. `uni.useNav()` brings the nav overlay back.
+
+Both are **no-ops on button-only boards** (where disabling nav would just trap the user) — so it's safe to call them unconditionally in a portable script. Nav is **re-enabled automatically when the script exits**, so you only need `uni.useNav()` if you want it back mid-script.
+
+```lua
+local nav = require("uni.nav")
+
+uni.useTouch()                 -- full-screen raw touch, no nav zones drawn
+
+while true do
+  if nav.isTouched() then
+    lcd.fillCircle(nav.touchX(), nav.touchY(), 6, lcd.color(0, 220, 0))
+  end
+  uni.delay(16)
+end
+-- nav restored automatically on exit
+```
+
+> [!note]
+> Raw touch coordinates (`nav.touchX/Y/isTouched`) work whether or not you call `uni.useTouch()` — this just controls whether the nav overlay zones are painted over your drawing.
+
+> [!warning] Always give the user a way out
+> With the nav overlay hidden the user can no longer see where the "back" zone is, so a `useTouch()` script **must draw its own visible "Back" / "Exit" button** and act on it — break the loop (or call `uni.useNav()`) when it's tapped. Without one the user is trapped in your program with no obvious way to leave.
+>
+> ```lua
+> uni.useTouch()
+> local BTN = { x = 0, y = 0, w = 60, h = 24 }   -- top-left "Exit" button
+> lcd.fillRoundRect(BTN.x, BTN.y, BTN.w, BTN.h, 4, lcd.color(180, 40, 40))
+> lcd.textColor(0xFFFF); lcd.print(BTN.x + 10, BTN.y + 8, "Exit")
+>
+> while true do
+>   if nav.btn() == "back" then break end        -- physical/zone back still works
+>   if nav.isTouched() then
+>     local tx, ty = nav.touchX(), nav.touchY()
+>     if tx >= BTN.x and tx < BTN.x + BTN.w and
+>        ty >= BTN.y and ty < BTN.y + BTN.h then break end   -- tapped Exit
+>   end
+>   uni.delay(16)
+> end
+> ```
+
+---
+
 ### `math.random` / `math.randomseed`
 
 The runner reseeds **both** Arduino's `random()` and Lua's `math.random()` from the device's hardware RNG (`esp_random()` mixed with MAC, RTC, micros, and an NVS-persisted rolling chain) every time a script starts. **You don't need to call `math.randomseed()` at all** — every run is already seeded with fresh entropy.
@@ -881,7 +926,7 @@ Modules are lazy-loaded — call require() once before the while loop:
   local wifi   = require("uni.wifi")    -- station-mode connect/status
   local http   = require("uni.http")    -- blocking GET/POST (TLS via setInsecure)
   local subghz = require("uni.subghz")  -- Sub-GHz RF (CC1101 / M5 RF433 auto-detect)
-The uni table (debug, delay, millis, heap, beep) is always a global — no require needed.
+The uni table (debug, delay, millis, heap, beep, useTouch, useNav) is always a global — no require needed.
 There is NO file-backed loader — require("mymodule") does NOT load .lua files.
 
 ## Anti-flicker rule — CRITICAL
@@ -896,6 +941,27 @@ For changing text: use lcd.textColor(fg, bg) + string.format padding instead of 
 For complex composited frames: build into lcd.sprite(w, h) and sp:push() once per frame.
 lcd.clear() / lcd.fillScreen() are fine for static screens (idle, game over) drawn only on state entry.
 
+## useTouch escape-hatch rule — CRITICAL
+If the script calls uni.useTouch(), the firmware nav overlay is hidden — the user can NO
+LONGER see where the "back" zone is. Every useTouch() script MUST therefore:
+  1. Draw a visible "Back" / "Exit" button on screen (e.g. a labelled rect in a corner).
+  2. Hit-test taps against it each frame and break (or call uni.useNav()) when tapped.
+  3. Keep the nav.btn() == "back" check as a fallback for physical/zone back.
+Without a visible exit the user is trapped in the program. nav is auto-restored on exit, so
+you do not need uni.useNav() unless you want the overlay back mid-script.
+  uni.useTouch()
+  local EX = { x = 0, y = 0, w = 60, h = 24 }
+  lcd.fillRoundRect(EX.x, EX.y, EX.w, EX.h, 4, lcd.color(180, 40, 40))
+  lcd.textColor(0xFFFF); lcd.print(EX.x + 10, EX.y + 8, "Exit")
+  while true do
+    if nav.btn() == "back" then break end
+    if nav.isTouched() then
+      local tx, ty = nav.touchX(), nav.touchY()
+      if tx >= EX.x and tx < EX.x + EX.w and ty >= EX.y and ty < EX.y + EX.h then break end
+    end
+    uni.delay(16)
+  end
+
 ## Complete API
 
 ### System (always available — no require)
@@ -904,6 +970,10 @@ uni.delay(ms)           -- pause ms milliseconds; nav state stays fresh across d
 uni.millis()            -- returns uptime in milliseconds (number)
 uni.heap()              -- returns free internal heap in bytes (number)
 uni.beep(freq, ms)      -- play tone; no-op on boards without speaker
+uni.useTouch()          -- touch boards: hide nav overlay, give script the full screen
+                        --   MUST draw a visible Back/Exit button + break on it,
+                        --   else the user is trapped (nav guides are hidden)
+uni.useNav()            -- touch boards: restore nav overlay (auto-restored on exit anyway)
 
 ### Input  (require "uni.nav" first)
 nav.btn()               -- returns one string per consumed press:

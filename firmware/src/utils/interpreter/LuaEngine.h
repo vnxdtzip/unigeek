@@ -103,6 +103,8 @@ private:
   static int _uni_heap(lua_State* L);
   static int _uni_millis(lua_State* L);
   static int _uni_beep(lua_State* L);
+  static int _uni_useTouch(lua_State* L);
+  static int _uni_useNav(lua_State* L);
   static int _lua_exit(lua_State* L);
 
   // Override for Lua's stock math.randomseed — folds the user-supplied seed

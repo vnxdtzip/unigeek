@@ -178,7 +178,9 @@ void LuaScreen::_startScript(const String& path) {
 
 void LuaScreen::_handleDone(bool isError) {
   _engine.deinit();
-#ifdef DEVICE_HAS_TOUCH_NAV
+  // Re-enable nav for any touch board: the runner suppresses it on touch-nav
+  // boards at start, and a script may have toggled it via uni.useTouch().
+#if defined(DEVICE_HAS_TOUCH) || defined(DEVICE_HAS_TOUCH_NAV)
   if (Uni.Nav) Uni.Nav->setSuppressKeys(false);
 #endif
   if (!isError) {
