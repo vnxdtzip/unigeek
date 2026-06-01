@@ -12,15 +12,17 @@ public:
 
 private:
 #ifdef DEVICE_HAS_WEBAUTHN
-  ListItem _items[3] = {
+  ListItem _items[4] = {
     {"USB MouseKeyboard"},
     {"BLE MouseKeyboard"},
     {"USB Web Authn"},
+    {"USB Mass Storage"},
   };
 #elif defined(DEVICE_HAS_USB_HID)
-  ListItem _items[2] = {
+  ListItem _items[3] = {
     {"USB MouseKeyboard"},
     {"BLE MouseKeyboard"},
+    {"USB Mass Storage"},
   };
 #else
   ListItem _items[1] = {

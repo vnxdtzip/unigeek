@@ -5,6 +5,9 @@
 #ifdef DEVICE_HAS_WEBAUTHN
 #include "screens/hid/WebAuthnScreen.h"
 #endif
+#ifdef DEVICE_HAS_USB_HID
+#include "screens/hid/MassStorageScreen.h"
+#endif
 
 void KeyboardMenuScreen::onInit()
 {
@@ -25,6 +28,15 @@ void KeyboardMenuScreen::onItemSelected(uint8_t index)
   #ifdef DEVICE_HAS_WEBAUTHN
   if (index == 2) {
     Screen.push(new WebAuthnScreen());
+    return;
+  }
+  if (index == 3) {
+    Screen.push(new MassStorageScreen());
+    return;
+  }
+  #else
+  if (index == 2) {
+    Screen.push(new MassStorageScreen());
     return;
   }
   #endif

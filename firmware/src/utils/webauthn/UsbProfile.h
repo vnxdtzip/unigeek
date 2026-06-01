@@ -15,10 +15,17 @@ namespace webauthn {
 // descriptor per boot. Whichever screen the user opens first claims the
 // profile; the other shows a "reboot to switch" message until power
 // cycle. The relevant `addDevice()` call is gated on `claim()` success.
+//
+// MASS_STORAGE is not HID, but it shares the same constraint for a different
+// reason: arduino-esp32 builds the USB descriptor lazily on USB.begin(), and
+// USBMSC registers its interface in its constructor (tinyusb_enable_interface)
+// which must run before USB.begin(). So MSC also has to be the first USB
+// feature opened this boot — it joins the same one-of-N arbitration.
 enum class UsbProfile : uint8_t {
-  NONE      = 0,
-  COMPOSITE = 1,  // keyboard + mouse (DuckyScript / Mouse Jiggle / kbd relay)
-  WEBAUTHN  = 2,  // FIDO2 / WebAuthn passkey
+  NONE         = 0,
+  COMPOSITE    = 1,  // keyboard + mouse (DuckyScript / Mouse Jiggle / kbd relay)
+  WEBAUTHN     = 2,  // FIDO2 / WebAuthn passkey
+  MASS_STORAGE = 3,  // USB Mass Storage (SD card exposed as a removable drive)
 };
 
 // Returns the profile that has claimed USB this boot, or NONE if no

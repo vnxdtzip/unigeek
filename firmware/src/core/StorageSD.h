@@ -146,7 +146,47 @@ public:
     return _available ? _guardedFs : static_cast<fs::FS&>(SD);
   }
 
+  // ── Raw block-device access (USB Mass Storage) ───────────────────────────
+  // SD presents a real FAT volume in 512-byte sectors. Raw reads/writes go
+  // through the MISO/DC guard just like every other SD op so concurrent access
+  // (USB ISR task vs render loop) is serialised and GPIO35 stays correct on
+  // CoreS3-style boards.
+  bool isBlockDevice() override { return _available; }
+
+  uint32_t blockCount() override {
+    if (!_available) return 0;
+    MisoDcGuard::Scope s(_guard);
+    return (uint32_t)SD.numSectors();
+  }
+
+  uint16_t blockSize() override {
+    if (!_available) return 0;
+    MisoDcGuard::Scope s(_guard);
+    return (uint16_t)SD.sectorSize();
+  }
+
+  bool readBlocks(uint32_t lba, uint8_t* dst, uint32_t count) override {
+    if (!_available || !dst) return false;
+    MisoDcGuard::Scope s(_guard);
+    for (uint32_t i = 0; i < count; i++) {
+      if (!SD.readRAW(dst + i * SECTOR_SIZE, lba + i)) return false;
+    }
+    return true;
+  }
+
+  bool writeBlocks(uint32_t lba, const uint8_t* src, uint32_t count) override {
+    if (!_available || !src) return false;
+    MisoDcGuard::Scope s(_guard);
+    for (uint32_t i = 0; i < count; i++) {
+      // writeRAW takes a non-const buffer but does not modify it.
+      if (!SD.writeRAW(const_cast<uint8_t*>(src) + i * SECTOR_SIZE, lba + i)) return false;
+    }
+    return true;
+  }
+
 private:
+  static constexpr uint32_t SECTOR_SIZE = 512;  // SD readRAW/writeRAW operate one 512B sector at a time
+
   bool        _available = false;
   uint8_t     _csPin     = 0;
   uint32_t    _freq      = 4000000;
