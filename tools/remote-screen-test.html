@@ -223,7 +223,7 @@ $('connect').onclick = async () => {
     readLoop();
     $('start').disabled = false; $('stop').disabled = false;
     $('connect').disabled = true;
-    log('connected — Start stream. arrows=nav, Esc=back, Ctrl/Cmd+Enter=press; Enter=type (keyboard) or press/hold (else). Click=touch.');
+    log('connected — Start stream. arrows=nav, Esc=back, Ctrl/Cmd+Enter=press, Ctrl/Cmd+Bksp=back; Enter/Bksp=type on keyboard boards. Click=touch.');
   } catch (e) { log('connect failed: ' + e.message); }
 };
 
@@ -274,6 +274,8 @@ window.addEventListener('keydown', (e) => {
 
   if (hasKeyboard) {
     // Keyboard board: type chars + Backspace as keys (typing/delete in inputs).
+    // Ctrl/Cmd+Backspace = nav BACK (since plain Backspace deletes here).
+    if (k === 'Backspace' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); return sendDir(DIR_BACK, 'BACK'); }
     if (k === 'Backspace') { e.preventDefault(); return sendKey(8, 'Bksp'); }
     if (k.length === 1)    { e.preventDefault(); return sendKey(k.charCodeAt(0), JSON.stringify(k)); }
     return;
