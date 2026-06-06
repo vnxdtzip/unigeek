@@ -72,6 +72,17 @@ public:
   void setSuppressKeys(bool s) { _suppressKeys = s; }
   bool suppressKeys() const    { return _suppressKeys; }
 
+  // Inject a synthetic tap of `dir` (e.g. from the web remote). Because the
+  // press/release state lives here in the base, this works on whatever board
+  // nav is active with no decorator: the next wasPressed()/readDirection()
+  // report a completed press of `dir`. Same-task as the screen poll, so no
+  // race. Taps only (no hold) — enough for 6-way menu navigation.
+  void inject(Direction dir) {
+    if (dir == DIR_NONE) return;
+    _wasPressed = true;
+    _releasedDirection = dir;
+  }
+
   int16_t lastTouchX() const { return _lastTouchX; }
   int16_t lastTouchY() const { return _lastTouchY; }
 

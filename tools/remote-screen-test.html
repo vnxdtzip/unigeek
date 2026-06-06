@@ -40,6 +40,9 @@ const SOF1 = 0xa5, SOF2 = 0x5a;
 const CTX_REMOTE  = 'S'.charCodeAt(0); // 0x53
 const C_SCR_START = 0x01;
 const C_SCR_STOP  = 0x02;
+const C_SCR_INPUT = 0x10;
+// INavigation::Direction enum (firmware core/INavigation.h)
+const DIR_UP = 1, DIR_DOWN = 2, DIR_LEFT = 3, DIR_RIGHT = 4, DIR_PRESS = 5, DIR_BACK = 6;
 const T_SCR_HELLO = 0xa0;
 const T_SCR_FRAME = 0xa1;
 const T_SCR_FILL  = 0xa2;
@@ -92,8 +95,8 @@ function makeFrameParser(onFrame) {
           hdr[hdrIdx++] = b;
           if (hdrIdx === 7) {
             ctx = hdr[0]; type = hdr[1]; seq = hdr[2];
-            len = hdr[3] | (hdr[4] << 8) | (hdr[5] << 16) | (hdr[6] << 24);
-            if (len > 16384) { state = 0; break; }
+            len = (hdr[3] | (hdr[4] << 8) | (hdr[5] << 16) | (hdr[6] << 24)) >>> 0;
+            if (len > 16384) { state = 0; break; } // unsigned: drops bogus/negative lengths on resync
             pIdx = 0; crcIdx = 0;
             if (len > 0) { payload = new Uint8Array(len); state = 3; }
             else { payload = new Uint8Array(0); state = 4; }
@@ -213,12 +216,42 @@ $('connect').onclick = async () => {
     readLoop();
     $('start').disabled = false; $('stop').disabled = false;
     $('connect').disabled = true;
-    log('connected');
+    log('connected — Start stream, then control with arrows / Enter / Esc, or click the canvas');
   } catch (e) { log('connect failed: ' + e.message); }
 };
 
 $('start').onclick = () => { send(buildFrame(CTX_REMOTE, C_SCR_START, 1, new Uint8Array([10]))); log('→ START fps=10'); };
 $('stop').onclick  = () => { send(buildFrame(CTX_REMOTE, C_SCR_STOP, 2, null)); log('→ STOP'); };
+
+// ── Remote control: keyboard / canvas-click → C_SCR_INPUT (6-way nav) ─────────
+let inputSeq = 10;
+function sendDir(dir, label) {
+  if (!writer) return;
+  send(buildFrame(CTX_REMOTE, C_SCR_INPUT, (inputSeq = (inputSeq + 1) & 0xff), new Uint8Array([dir])));
+  log('→ ' + label);
+}
+const KEYMAP = {
+  ArrowUp: [DIR_UP, 'UP'], ArrowDown: [DIR_DOWN, 'DOWN'],
+  ArrowLeft: [DIR_LEFT, 'LEFT'], ArrowRight: [DIR_RIGHT, 'RIGHT'],
+  Enter: [DIR_PRESS, 'PRESS'], ' ': [DIR_PRESS, 'PRESS'],
+  Escape: [DIR_BACK, 'BACK'], Backspace: [DIR_BACK, 'BACK'],
+};
+window.addEventListener('keydown', (e) => {
+  const m = KEYMAP[e.key];
+  if (!m || !writer) return;
+  e.preventDefault();
+  sendDir(m[0], m[1]);
+});
+// Click zones on the canvas: left/right/top/bottom thirds → directions, center → press.
+cv.addEventListener('click', (e) => {
+  const r = cv.getBoundingClientRect();
+  const fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height;
+  if      (fx < 0.33) sendDir(DIR_LEFT, 'LEFT');
+  else if (fx > 0.66) sendDir(DIR_RIGHT, 'RIGHT');
+  else if (fy < 0.33) sendDir(DIR_UP, 'UP');
+  else if (fy > 0.66) sendDir(DIR_DOWN, 'DOWN');
+  else                sendDir(DIR_PRESS, 'PRESS');
+});
 
 if (!('serial' in navigator)) {
   log('Web Serial not available — use Chrome/Edge over https or localhost.');

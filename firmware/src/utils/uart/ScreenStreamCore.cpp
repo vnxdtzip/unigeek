@@ -4,13 +4,21 @@
 #include "core/ScreenManager.h"
 
 void ScreenStreamCore::onFrame(uint8_t ctx, uint8_t type, uint8_t seq, uint8_t* payload, uint32_t len) {
-  (void)payload; (void)len;
   if (ctx != ScreenProto::CTX) return; // another codec owns this context
   switch (type) {
     case ScreenProto::C_START: _start(seq); break;
     case ScreenProto::C_STOP:  Mirror.stop(); sendOk(ScreenProto::CTX, seq); break;
-    // ScreenProto::C_INPUT (nav injection) is wired in the control step.
-    default:                   sendErr(ScreenProto::CTX, seq, "unknown command");
+    case ScreenProto::C_INPUT: {
+      // payload[0] = INavigation::Direction (1=UP..6=BACK). Inject as a tap and
+      // count it as activity so a remote session doesn't dim into power-save.
+      uint8_t d = (len > 0) ? payload[0] : 0;
+      if (Uni.Nav && d >= INavigation::DIR_UP && d <= INavigation::DIR_BACK) {
+        Uni.Nav->inject((INavigation::Direction)d);
+        Uni.lastActiveMs = millis();
+      }
+      break;
+    }
+    default: sendErr(ScreenProto::CTX, seq, "unknown command");
   }
 }
 
