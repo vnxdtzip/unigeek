@@ -14,11 +14,16 @@
 
 class UartFileManager {
 public:
-  void begin();              // allocate the cores + wire the sender (idempotent)
+  // Allocate the requested cores + wire the sender (idempotent). Either service
+  // can be enabled independently; a disabled core is never allocated, so its
+  // SRAM is reclaimed (FM core ~8 KB, screen codec tiny + ~8 KB band only while
+  // actively streaming).
+  void begin(bool fmEnabled, bool mirrorEnabled);
   void update();             // no-op until begin() has run
-  bool isActive() const { return _fm != nullptr; }
+  bool isActive() const { return _fm != nullptr || _scr != nullptr; }
 
 private:
+  bool              _started = false;
   FileManagerCore*  _fm  = nullptr;
   ScreenStreamCore* _scr = nullptr;
   static void _sendBytes(const uint8_t* data, size_t len);
