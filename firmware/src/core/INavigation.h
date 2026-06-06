@@ -86,6 +86,19 @@ public:
     _releasedDirection = dir;
   }
 
+  // Remote touch tap at a panel coordinate (web canvas click). Sets the last
+  // touch coords AND injects `dir` — the nav direction the touched zone maps to
+  // on touch boards (computed by the caller from the panel layout), or PRESS —
+  // so it behaves like a real panel touch: coordinate-reading screens (touch
+  // calibration, on-screen keyboards, Lua touch) use the coords, while zone-nav
+  // screens get the right direction. Same-task as the screen poll, so no race.
+  void injectTouch(int16_t x, int16_t y, Direction dir) {
+    _lastTouchX = x;
+    _lastTouchY = y;
+    _wasPressed = true;
+    _releasedDirection = (dir != DIR_NONE) ? dir : DIR_PRESS;
+  }
+
   // One-shot remote long-press (web "m"). A single call holds `dir` for
   // kInjectHoldMs so isPressed()/heldDuration() report a long hold — long-press
   // handlers (FileManager / ListScreen "hold to open menu") fire — then

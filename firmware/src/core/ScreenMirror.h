@@ -24,8 +24,13 @@ namespace ScreenProto {
   static constexpr uint8_t CTX     = 'S';
   static constexpr uint8_t C_START = 0x01; // [fps:1] optional (ignored — event-driven)
   static constexpr uint8_t C_STOP  = 0x02;
-  static constexpr uint8_t C_INPUT = 0x10; // [dir:1] nav injection
-  static constexpr uint8_t T_HELLO = 0xA0; // [w:2][h:2][format:1][rot:1]
+  static constexpr uint8_t C_INPUT = 0x10; // [dir:1][event:1] nav injection
+  static constexpr uint8_t C_TOUCH = 0x11; // [x:2][y:2] touch tap at coordinate
+  static constexpr uint8_t C_KEY   = 0x12; // [char:1] keyboard character injection
+  static constexpr uint8_t T_HELLO = 0xA0; // [w:2][h:2][format:1][caps:1]
+  // HELLO caps byte: bit0 = has touch nav, bit1 = has keyboard.
+  static constexpr uint8_t CAP_TOUCH    = 0x01;
+  static constexpr uint8_t CAP_KEYBOARD = 0x02;
   static constexpr uint8_t T_FRAME = 0xA1; // [x:2][y:2][w:2][h:2][rgb565…]
 }
 

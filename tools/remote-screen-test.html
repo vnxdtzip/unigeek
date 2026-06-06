@@ -41,6 +41,10 @@ const CTX_REMOTE  = 'S'.charCodeAt(0); // 0x53
 const C_SCR_START = 0x01;
 const C_SCR_STOP  = 0x02;
 const C_SCR_INPUT = 0x10;
+const C_SCR_TOUCH = 0x11;
+const C_SCR_KEY   = 0x12;
+const CAP_TOUCH    = 0x01;
+const CAP_KEYBOARD = 0x02;
 // INavigation::Direction enum (firmware core/INavigation.h)
 const DIR_UP = 1, DIR_DOWN = 2, DIR_LEFT = 3, DIR_RIGHT = 4, DIR_PRESS = 5, DIR_BACK = 6;
 const T_SCR_HELLO = 0xa0;
@@ -123,6 +127,7 @@ const $ = (id) => document.getElementById(id);
 const cv = $('screen'), ctx2d = cv.getContext('2d');
 let port = null, writer = null, reader = null, keepReading = false;
 let regions = 0, lastTick = performance.now();
+let hasTouch = false, hasKeyboard = false; // board capabilities (from HELLO)
 
 function log(msg) {
   const el = $('log');
@@ -148,10 +153,12 @@ function onFrame(ctx, type, seq, p) {
   if (type === T_ERR) { log('device ERR: ' + new TextDecoder().decode(p)); return; }
 
   if (type === T_SCR_HELLO) {
-    const w = rd16(p, 0), h = rd16(p, 2), fmt = p[4];
+    const w = rd16(p, 0), h = rd16(p, 2), fmt = p[4], caps = p[5] || 0;
+    hasTouch = !!(caps & CAP_TOUCH);
+    hasKeyboard = !!(caps & CAP_KEYBOARD);
     cv.width = w; cv.height = h;            // also clears the canvas
     cv.style.height = (480 * h / w) + 'px';
-    log(`HELLO ${w}x${h} fmt=${fmt}`);
+    log(`HELLO ${w}x${h} fmt=${fmt} ${hasTouch ? 'touch ' : ''}${hasKeyboard ? 'keyboard' : ''}`);
     return;
   }
 
@@ -216,49 +223,76 @@ $('connect').onclick = async () => {
     readLoop();
     $('start').disabled = false; $('stop').disabled = false;
     $('connect').disabled = true;
-    log('connected — Start stream, then control with arrows / Enter / Esc, or click the canvas');
+    log('connected — Start stream. Keys: arrows = nav, Enter = press (hold = long-press), Esc = back. Click canvas = touch.');
   } catch (e) { log('connect failed: ' + e.message); }
 };
 
 $('start').onclick = () => { send(buildFrame(CTX_REMOTE, C_SCR_START, 1, new Uint8Array([10]))); log('→ START fps=10'); };
 $('stop').onclick  = () => { send(buildFrame(CTX_REMOTE, C_SCR_STOP, 2, null)); log('→ STOP'); };
 
-// ── Remote control: keyboard / canvas-click → C_SCR_INPUT ────────────────────
-// payload = [dir, event]; event 0=tap, 1=hold-down, 2=hold-up.
+// ── Remote control — capability-driven (from HELLO caps) ─────────────────────
 let inputSeq = 10;
+function nextSeq() { return (inputSeq = (inputSeq + 1) & 0xff); }
+// Nav direction. payload = [dir, event]; event 0=tap, 1=one-shot long-press.
 function sendDir(dir, label, ev = 0) {
   if (!writer) return;
-  send(buildFrame(CTX_REMOTE, C_SCR_INPUT, (inputSeq = (inputSeq + 1) & 0xff), new Uint8Array([dir, ev])));
+  send(buildFrame(CTX_REMOTE, C_SCR_INPUT, nextSeq(), new Uint8Array([dir, ev])));
   log('→ ' + label);
 }
-const KEYMAP = {
-  ArrowUp: [DIR_UP, 'UP'], ArrowDown: [DIR_DOWN, 'DOWN'],
-  ArrowLeft: [DIR_LEFT, 'LEFT'], ArrowRight: [DIR_RIGHT, 'RIGHT'],
-  Enter: [DIR_PRESS, 'PRESS'], ' ': [DIR_PRESS, 'PRESS'],
-  Escape: [DIR_BACK, 'BACK'], Backspace: [DIR_BACK, 'BACK'],
-};
+// Keyboard character (keyboard boards): typing + Enter('\n')/Backspace('\b').
+function sendKey(code, label) {
+  if (!writer) return;
+  send(buildFrame(CTX_REMOTE, C_SCR_KEY, nextSeq(), new Uint8Array([code & 0xff])));
+  log('→ key ' + label);
+}
+
+// Enter on non-keyboard boards: quick tap = PRESS, hold ≥400 ms = long-press.
+let enterTimer = null, enterHeld = false;
 window.addEventListener('keydown', (e) => {
   if (!writer) return;
-  // "m" = one-shot long-press of select (opens FileManager-style hold menus).
-  if (e.key === 'm' || e.key === 'M') {
-    e.preventDefault();
-    if (!e.repeat) sendDir(DIR_PRESS, 'HOLD', 1); // single press, ignore key-repeat
+  const k = e.key;
+  // Arrows are always nav directions (board-agnostic).
+  if (k === 'ArrowUp')    { e.preventDefault(); return sendDir(DIR_UP, 'UP'); }
+  if (k === 'ArrowDown')  { e.preventDefault(); return sendDir(DIR_DOWN, 'DOWN'); }
+  if (k === 'ArrowLeft')  { e.preventDefault(); return sendDir(DIR_LEFT, 'LEFT'); }
+  if (k === 'ArrowRight') { e.preventDefault(); return sendDir(DIR_RIGHT, 'RIGHT'); }
+
+  if (hasKeyboard) {
+    // Keyboard board: type chars; Enter/Backspace as keys (the device's nav also
+    // reads \n/\b for select/back); Esc = nav back.
+    if (k === 'Escape')    { e.preventDefault(); return sendDir(DIR_BACK, 'BACK'); }
+    if (k === 'Enter')     { e.preventDefault(); return sendKey(10, 'Enter'); }
+    if (k === 'Backspace') { e.preventDefault(); return sendKey(8, 'Bksp'); }
+    if (k.length === 1)    { e.preventDefault(); return sendKey(k.charCodeAt(0), JSON.stringify(k)); }
     return;
   }
-  const m = KEYMAP[e.key];
-  if (!m) return;
-  e.preventDefault();
-  sendDir(m[0], m[1]);
+
+  // Non-keyboard board: 6-way nav only.
+  if (k === 'Escape' || k === 'Backspace') { e.preventDefault(); return sendDir(DIR_BACK, 'BACK'); }
+  if (k === ' ')                           { e.preventDefault(); return sendDir(DIR_PRESS, 'PRESS'); }
+  if (k === 'Enter') {
+    e.preventDefault();
+    if (e.repeat) return; // auto-repeat ignored; timer drives the hold
+    enterHeld = false;
+    enterTimer = setTimeout(() => { enterHeld = true; sendDir(DIR_PRESS, 'HOLD', 1); }, 400);
+  }
 });
-// Click zones on the canvas: left/right/top/bottom thirds → directions, center → press.
+window.addEventListener('keyup', (e) => {
+  if (e.key === 'Enter' && !hasKeyboard) {
+    clearTimeout(enterTimer);
+    if (!enterHeld) sendDir(DIR_PRESS, 'PRESS', 0); // released quickly → tap
+  }
+});
+
+// Canvas click → touch tap (touch boards only; ignored otherwise).
 cv.addEventListener('click', (e) => {
+  if (!writer || !hasTouch) return;
   const r = cv.getBoundingClientRect();
-  const fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height;
-  if      (fx < 0.33) sendDir(DIR_LEFT, 'LEFT');
-  else if (fx > 0.66) sendDir(DIR_RIGHT, 'RIGHT');
-  else if (fy < 0.33) sendDir(DIR_UP, 'UP');
-  else if (fy > 0.66) sendDir(DIR_DOWN, 'DOWN');
-  else                sendDir(DIR_PRESS, 'PRESS');
+  const x = Math.max(0, Math.min(cv.width  - 1, Math.round((e.clientX - r.left) / r.width  * cv.width)));
+  const y = Math.max(0, Math.min(cv.height - 1, Math.round((e.clientY - r.top)  / r.height * cv.height)));
+  send(buildFrame(CTX_REMOTE, C_SCR_TOUCH, nextSeq(),
+                  new Uint8Array([x & 0xff, (x >> 8) & 0xff, y & 0xff, (y >> 8) & 0xff])));
+  log(`→ TOUCH ${x},${y}`);
 });
 
 if (!('serial' in navigator)) {
