@@ -49,6 +49,21 @@ void ScreenMirror::fill(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t col
   emit(ScreenProto::T_FILL, p, sizeof(p));
 }
 
+void ScreenMirror::image(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t* src) {
+  if (!_sink || !_band || !src || w <= 0 || h <= 0) return;
+  // Band-split the source rows so each FRAME fits one transport frame. src is
+  // row-major, stride == w (the full-image pushImage overload, no cropping).
+  for (int16_t j = 0; j < h; j += _bandRows) {
+    int16_t bh = (j + (int16_t)_bandRows <= h) ? (int16_t)_bandRows : (h - j);
+    memcpy(_band + 8, src + (size_t)j * w, (size_t)w * bh * 2);
+    _wr16(_band + 0, (uint16_t)x);
+    _wr16(_band + 2, (uint16_t)(y + j));
+    _wr16(_band + 4, (uint16_t)w);
+    _wr16(_band + 6, (uint16_t)bh);
+    emit(ScreenProto::T_FRAME, _band, 8 + (uint32_t)w * bh * 2);
+  }
+}
+
 #ifndef DISPLAY_BACKEND_M5GFX
 // CaptureSprite is declared in IDisplay.h (TFT_eSPI backend). Stream the sprite's
 // rect to the host in horizontal bands. readPixel() yields canonical RGB565

@@ -46,6 +46,9 @@ public:
   // Mirror a solid rect (clipped) — clears, scrollbar. Sent as a 10-byte FILL.
   void fill(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
 
+  // Mirror a row-major RGB565 image (direct pushImage) as banded FRAMEs.
+  void image(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t* src);
+
   // Capture path for CaptureSprite (defined in ScreenMirror.cpp): reads the
   // sprite rect via readPixel into the band staging buffer and emits FRAME(s).
   uint8_t* band()           { return _band; }
