@@ -223,7 +223,7 @@ $('connect').onclick = async () => {
     readLoop();
     $('start').disabled = false; $('stop').disabled = false;
     $('connect').disabled = true;
-    log('connected — Start stream. Keys: arrows = nav, Enter = press (hold = long-press), Esc = back. Click canvas = touch.');
+    log('connected — Start stream. arrows=nav, Esc=back, Ctrl/Cmd+Enter=press; Enter=type (keyboard) or press/hold (else). Click=touch.');
   } catch (e) { log('connect failed: ' + e.message); }
 };
 
@@ -246,40 +246,45 @@ function sendKey(code, label) {
   log('→ key ' + label);
 }
 
-// Enter on non-keyboard boards: quick tap = PRESS, hold ≥400 ms = long-press.
 let enterTimer = null, enterHeld = false;
 window.addEventListener('keydown', (e) => {
   if (!writer) return;
   const k = e.key;
-  // Arrows are always nav directions (board-agnostic).
+  // Nav is always C_INPUT (board-agnostic, reliable). Arrows + Esc + Enter.
   if (k === 'ArrowUp')    { e.preventDefault(); return sendDir(DIR_UP, 'UP'); }
   if (k === 'ArrowDown')  { e.preventDefault(); return sendDir(DIR_DOWN, 'DOWN'); }
   if (k === 'ArrowLeft')  { e.preventDefault(); return sendDir(DIR_LEFT, 'LEFT'); }
   if (k === 'ArrowRight') { e.preventDefault(); return sendDir(DIR_RIGHT, 'RIGHT'); }
+  if (k === 'Escape')     { e.preventDefault(); return sendDir(DIR_BACK, 'BACK'); }
+  // Keyboard boards only: Ctrl/Cmd+Enter = nav PRESS (select), since plain Enter
+  // is a typed newline there. On other boards plain Enter already presses.
+  if (k === 'Enter' && hasKeyboard && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    return sendDir(DIR_PRESS, 'PRESS');
+  }
+  if (k === 'Enter') {
+    e.preventDefault();
+    if (hasKeyboard) return sendKey(10, 'Enter'); // keyboard board: type newline
+    // Non-keyboard board: tap = PRESS, hold ≥400 ms = long-press.
+    if (e.repeat) return;
+    enterHeld = false;
+    enterTimer = setTimeout(() => { enterHeld = true; sendDir(DIR_PRESS, 'HOLD', 1); }, 400);
+    return;
+  }
 
   if (hasKeyboard) {
-    // Keyboard board: type chars; Enter/Backspace as keys (the device's nav also
-    // reads \n/\b for select/back); Esc = nav back.
-    if (k === 'Escape')    { e.preventDefault(); return sendDir(DIR_BACK, 'BACK'); }
-    if (k === 'Enter')     { e.preventDefault(); return sendKey(10, 'Enter'); }
+    // Keyboard board: type chars + Backspace as keys (typing/delete in inputs).
     if (k === 'Backspace') { e.preventDefault(); return sendKey(8, 'Bksp'); }
     if (k.length === 1)    { e.preventDefault(); return sendKey(k.charCodeAt(0), JSON.stringify(k)); }
     return;
   }
-
   // Non-keyboard board: 6-way nav only.
-  if (k === 'Escape' || k === 'Backspace') { e.preventDefault(); return sendDir(DIR_BACK, 'BACK'); }
-  if (k === ' ')                           { e.preventDefault(); return sendDir(DIR_PRESS, 'PRESS'); }
-  if (k === 'Enter') {
-    e.preventDefault();
-    if (e.repeat) return; // auto-repeat ignored; timer drives the hold
-    enterHeld = false;
-    enterTimer = setTimeout(() => { enterHeld = true; sendDir(DIR_PRESS, 'HOLD', 1); }, 400);
-  }
+  if (k === 'Backspace') { e.preventDefault(); return sendDir(DIR_BACK, 'BACK'); }
+  if (k === ' ')         { e.preventDefault(); return sendDir(DIR_PRESS, 'PRESS'); }
 });
 window.addEventListener('keyup', (e) => {
-  if (e.key === 'Enter' && !hasKeyboard) {
-    clearTimeout(enterTimer);
+  if (e.key === 'Enter' && enterTimer !== null) { // only the non-keyboard tap/hold path
+    clearTimeout(enterTimer); enterTimer = null;
     if (!enterHeld) sendDir(DIR_PRESS, 'PRESS', 0); // released quickly → tap
   }
 });

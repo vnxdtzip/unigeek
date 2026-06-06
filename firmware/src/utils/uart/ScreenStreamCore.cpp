@@ -71,9 +71,9 @@ void ScreenStreamCore::_start(uint8_t seq) {
 #ifdef DEVICE_HAS_TOUCH_NAV
   caps |= ScreenProto::CAP_TOUCH;
 #endif
-#ifdef DEVICE_HAS_KEYBOARD
-  caps |= ScreenProto::CAP_KEYBOARD;
-#endif
+  // Runtime check — robust regardless of build-flag propagation; Uni.Keyboard
+  // is non-null only on boards with a physical keyboard.
+  if (Uni.Keyboard) caps |= ScreenProto::CAP_KEYBOARD;
   hello[5] = caps;
   sendFrame(ScreenProto::CTX, ScreenProto::T_HELLO, _seq, hello, sizeof(hello));
 
