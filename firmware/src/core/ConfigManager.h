@@ -48,6 +48,8 @@
 #define APP_CONFIG_TOUCH_CALIBRATED_DEFAULT     "0"
 #define APP_CONFIG_SERIAL_FM                    "serial_fm"
 #define APP_CONFIG_SERIAL_FM_DEFAULT            "1"
+#define APP_CONFIG_WIKI_LANG                    "wiki_lang"
+#define APP_CONFIG_WIKI_LANG_DEFAULT            "en"
 
 class ConfigManager
 {

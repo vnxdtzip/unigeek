@@ -6,8 +6,8 @@
 #include "screens/utility/FileManagerScreen.h"
 #include "ui/actions/ShowStatusAction.h"
 
-static constexpr uint16_t MAX_LINES = 500;
-static constexpr uint32_t MAX_FILE_SIZE = 32768; // 32KB max to prevent OOM restart
+static constexpr uint16_t MAX_LINES = 3000;
+static constexpr uint32_t MAX_FILE_SIZE = 110 * 1024; // 110KB max (fits 100KB wiki text); larger files rejected to avoid OOM
 static constexpr uint8_t LINE_HEIGHT = 10;
 static constexpr uint8_t FONT = 1;
 
@@ -17,6 +17,10 @@ void FileViewerScreen::onInit() {
   String name = (slash >= 0) ? _path.substring(slash + 1) : _path;
   strncpy(_titleBuf, name.c_str(), sizeof(_titleBuf) - 1);
   _titleBuf[sizeof(_titleBuf) - 1] = '\0';
+
+  // Plain-text files get word-wrapped; everything else keeps raw line view.
+  String lower = name; lower.toLowerCase();
+  _wrap = lower.endsWith(".txt");
 
   if (!Uni.Storage || !Uni.Storage->isAvailable()) {
     ShowStatusAction::show("Storage not available");
@@ -52,7 +56,8 @@ void FileViewerScreen::onInit() {
     return;
   }
 
-  _parseLines();
+  if (_wrap) _parseLinesWrapped();
+  else       _parseLines();
   _visibleLines = bodyH() / LINE_HEIGHT;
 
   int n = Achievement.inc("fileview_first");
@@ -108,6 +113,54 @@ void FileViewerScreen::_parseLines() {
       }
       if (end) break;
       line = p + 1;
+    }
+  }
+}
+
+// Word-wrap the file in place. Font 1 at size 1 is fixed 6 px/char, so a line
+// budget is just a column count — no per-string textWidth needed. Wrap points
+// (the chosen space, or a '\n') are turned into '\0' so each wrapped line is a
+// zero-copy null-terminated slice of _content, exactly like _parseLines().
+// Over-long words with no break opportunity overflow and clip (same as raw view).
+void FileViewerScreen::_parseLinesWrapped() {
+  _lineCount = 0;
+  _lines = (const char**)malloc(MAX_LINES * sizeof(const char*));
+  if (!_lines) return;
+
+  // Leave room for the scrollbar (3 px); 6 px per glyph in font 1.
+  int textW = (int)bodyW() - 3;
+  int cols  = (textW > 6) ? textW / 6 : 1;
+  if (cols < 1) cols = 1;
+
+  char* buf = const_cast<char*>(_content.c_str());
+  int   n   = (int)_content.length();
+
+  int lineStart = 0;
+  int lastSpace = -1;   // index of last space in the current line (wrap candidate)
+  int col       = 0;
+
+  for (int i = 0; i <= n && _lineCount < MAX_LINES; i++) {
+    char c = (i < n) ? buf[i] : '\n';   // treat EOF as a final newline to flush
+    if (c == '\r') continue;
+
+    if (c == '\n') {
+      buf[i] = '\0';
+      _lines[_lineCount++] = &buf[lineStart];
+      lineStart = i + 1;
+      lastSpace = -1;
+      col = 0;
+      continue;
+    }
+
+    if (c == ' ') lastSpace = i;
+    col++;
+
+    if (col > cols && lastSpace >= lineStart) {
+      buf[lastSpace] = '\0';
+      _lines[_lineCount++] = &buf[lineStart];
+      lineStart = lastSpace + 1;
+      lastSpace = -1;
+      col = i - lineStart + 1;
     }
   }
 }

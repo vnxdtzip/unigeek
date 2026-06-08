@@ -38,10 +38,11 @@ private:
   uint8_t     _scannedCount = 0;
   ListItem    _scannedItems[WifiUtility::MAX_WIFI];
 
-  ListItem _menuItems[13] = {
+  ListItem _menuItems[14] = {
     {"Information"},
     {"WiFi QRCode"},
     {"World Clock"},
+    {"Wikipedia"},
     {"IP Scanner"},
     {"Port Scanner"},
     {"Web File Manager"},

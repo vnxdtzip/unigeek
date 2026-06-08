@@ -22,8 +22,10 @@ private:
   uint16_t _lineCount = 0;
   uint16_t _scrollOffset = 0;
   uint16_t _visibleLines = 0;
+  bool     _wrap = false;        // word-wrap mode (enabled for .txt)
 
-  void _parseLines();
+  void _parseLines();            // split on '\n' only (raw)
+  void _parseLinesWrapped();     // word-wrap to body width (zero-copy, in-place)
   void _renderContent();
   void _goBack();
 };

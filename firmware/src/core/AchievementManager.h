@@ -38,7 +38,7 @@ public:
   struct Catalog { const AchDef* defs; uint16_t count; };
 
   // Returns catalog pointer + count derived from sizeof — no manual counting needed
-  // Next available sequential ID: 244  (IDs 164–198 already used; 199 placed in domain 9; 200–209 in domain 1; 210–223 in domain 9; 224–228 in domain 4; 229–230 in domain 12; 231–233 in domain 3; 234 in domain 1; 235–237 in domain 3; 238–243 in domain 10)
+  // Next available sequential ID: 261  (IDs 164–198 already used; 199 placed in domain 9; 200–209 in domain 1; 210–223 in domain 9; 224–228 in domain 4; 229–230 in domain 12; 231–233 in domain 3; 234 in domain 1; 235–237 in domain 3; 238–243 in domain 10; 244–252 across domains 0/9/1/3; 253–260 in domain 0 (Wikipedia))
   static Catalog catalog() {
     static constexpr AchDef kAchs[] = {
       // ── WiFi Network (domain 0) ────────────────────────────────────────────
@@ -63,6 +63,15 @@ public:
       { 244, "wifi_download_lua",         "Script Kiddie",          0, 1, "Download a Lua script from the unigeek-lua repo" },
       { 18, "wifi_world_clock",          "Time Lord",              0, 0, "View world clock via WiFi time sync" },
       { 19, "wifi_wigle_visit",          "WiGLE Curious",          0, 0, "Discover the WiGLE upload section from the WiFi menu" },
+      // ── Wikipedia (domain 0) ───────────────────────────────────────────────
+      { 253, "wiki_first_search",        "Encyclopedist",          0, 0, "Search Wikipedia for the first time" },
+      { 254, "wiki_read_first",          "First Read",             0, 0, "Read a Wikipedia article" },
+      { 255, "wiki_read_10",             "Bookworm",               0, 1, "Read 10 Wikipedia articles" },
+      { 256, "wiki_random",              "Lucky Dip",              0, 0, "Open a random Wikipedia article" },
+      { 257, "wiki_onthisday",           "History Buff",           0, 0, "View Wikipedia On This Day events" },
+      { 258, "wiki_favorite",            "Bookmarked",             0, 0, "Favorite a Wikipedia article" },
+      { 259, "wiki_share_qr",            "Pass It On",             0, 0, "Share a Wikipedia article as a QR code" },
+      { 260, "wiki_polyglot",            "Polyglot",               0, 1, "Read Wikipedia articles in two languages" },
       // ── WiFi Attacks (domain 1) ────────────────────────────────────────────
       { 20, "wifi_ap_started",           "Fake Hotspot",           1, 0, "Start a rogue access point" },
       { 21, "wifi_ap_client_visit",      "First Guest",            1, 1, "Get a client to connect to your AP" },

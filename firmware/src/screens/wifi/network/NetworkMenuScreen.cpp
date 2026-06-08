@@ -7,6 +7,7 @@
 #include "core/AchievementManager.h"
 #include "screens/wifi/WifiMenuScreen.h"
 #include "screens/wifi/network/WorldClockScreen.h"
+#include "screens/wifi/network/WikipediaScreen.h"
 #include "screens/wifi/network/IPScannerScreen.h"
 #include "screens/wifi/network/PortScannerScreen.h"
 #include "screens/wifi/network/WebFileManagerScreen.h"
@@ -63,16 +64,17 @@ void NetworkMenuScreen::onItemSelected(uint8_t index) {
       case 0: _showInformation(); break;
       case 1: _showWifiQR(); break;
       case 2: Screen.push(new WorldClockScreen()); break;
-      case 3: Screen.push(new IPScannerScreen());  break;
-      case 4: Screen.push(new PortScannerScreen()); break;
-      case 5: Screen.push(new WebFileManagerScreen()); break;
-      case 6: Screen.push(new DownloadScreen()); break;
-      case 7: Screen.push(new NetworkMitmScreen()); break;
-      case 8: Screen.push(new CctvSnifferScreen()); break;
-      case 9: Screen.push(new WigleScreen()); break;
-      case 10: Screen.push(new CastBombScreen()); break;
-      case 11: Screen.push(new BonjourSpamScreen()); break;
-      case 12: Screen.push(new PrinterPrankScreen()); break;
+      case 3: Screen.push(new WikipediaScreen()); break;
+      case 4: Screen.push(new IPScannerScreen());  break;
+      case 5: Screen.push(new PortScannerScreen()); break;
+      case 6: Screen.push(new WebFileManagerScreen()); break;
+      case 7: Screen.push(new DownloadScreen()); break;
+      case 8: Screen.push(new NetworkMitmScreen()); break;
+      case 9: Screen.push(new CctvSnifferScreen()); break;
+      case 10: Screen.push(new WigleScreen()); break;
+      case 11: Screen.push(new CastBombScreen()); break;
+      case 12: Screen.push(new BonjourSpamScreen()); break;
+      case 13: Screen.push(new PrinterPrankScreen()); break;
     }
   } else if (_state == STATE_INFORMATION) {
     _showMenu();
