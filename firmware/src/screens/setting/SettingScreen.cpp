@@ -46,6 +46,15 @@ void SettingScreen::_refresh() {
   _navSndSub   = Config.get(APP_CONFIG_NAV_SOUND,            APP_CONFIG_NAV_SOUND_DEFAULT).toInt() ? "On" : "Off";
 #endif
   _colorSub    = Config.get(APP_CONFIG_PRIMARY_COLOR,        APP_CONFIG_PRIMARY_COLOR_DEFAULT);
+#ifdef T_EMBED_CC1101
+  {
+    String m = Config.get(APP_CONFIG_LED_MODE, APP_CONFIG_LED_MODE_DEFAULT);
+    _ledModeSub = m == "solid"   ? "Solid"
+                : m == "rainbow" ? "Rainbow"
+                : m == "encoder" ? "Encoder"
+                :                  "Off";
+  }
+#endif
 #ifdef DEVICE_HAS_NAV_MODE_SWITCH
   _navModeSub  = Config.get(APP_CONFIG_NAV_MODE, APP_CONFIG_NAV_MODE_DEFAULT) == "encoder" ? "Encoder" : "Default";
 #endif
@@ -74,6 +83,9 @@ void SettingScreen::_refresh() {
   _items[SETT_NAV_SOUND].sublabel = _navSndSub.c_str();
 #endif
   _items[SETT_COLOR].sublabel        = _colorSub.c_str();
+#ifdef T_EMBED_CC1101
+  _items[SETT_LED_MODE].sublabel     = _ledModeSub.c_str();
+#endif
 #ifdef DEVICE_HAS_NAV_MODE_SWITCH
   _items[SETT_NAV_MODE].sublabel     = _navModeSub.c_str();
 #endif
@@ -212,6 +224,25 @@ void SettingScreen::onItemSelected(uint8_t index) {
       _refresh();
       break;
     }
+
+#ifdef T_EMBED_CC1101
+    case SETT_LED_MODE: {
+      static constexpr InputSelectAction::Option opts[] = {
+        {"Off",     "off"},
+        {"Solid",   "solid"},
+        {"Rainbow", "rainbow"},
+        {"Encoder", "encoder"},
+      };
+      String      cur    = Config.get(APP_CONFIG_LED_MODE, APP_CONFIG_LED_MODE_DEFAULT);
+      const char* result = InputSelectAction::popup("LED Effect", opts, 4, cur.c_str());
+      if (result != nullptr) {
+        Config.set(APP_CONFIG_LED_MODE, result);
+        Config.save(Uni.Storage);
+      }
+      _refresh();
+      break;
+    }
+#endif
 
 #ifdef DEVICE_HAS_TOUCH_NAV
     case SETT_TOUCH_GUIDE: {

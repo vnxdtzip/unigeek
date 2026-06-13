@@ -7,6 +7,7 @@
 #include "Display.h"
 #include "Power.h"
 #include "Speaker.h"
+#include "LedRing.h"
 #include <Wire.h>
 #include <esp_heap_caps.h>
 
@@ -16,7 +17,9 @@ static PowerImpl          power;
 static ExtSpiClass        sharedSpi(HSPI);
 static SpeakerEmbedCC1101 speaker;
 
-void Device::boardHook() {}
+void Device::boardHook() {
+  ledRing.update();
+}
 
 Device* Device::createInstance() {
   // Route all malloc to PSRAM first (falls back to internal RAM as needed)
@@ -39,6 +42,8 @@ Device* Device::createInstance() {
 
   Wire.begin(GROVE_SDA, GROVE_SCL);
   sharedSpi.begin(SPI_SCK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN, -1);
+
+  ledRing.begin();
 
   return new Device(display, power, &navigation, nullptr, &sharedSpi, &speaker);
 }

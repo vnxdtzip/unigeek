@@ -35,6 +35,9 @@ private:
     SETT_SPEAKER_TEST,
 #endif
     SETT_COLOR,
+#ifdef T_EMBED_CC1101
+    SETT_LED_MODE,
+#endif
 #ifdef DEVICE_HAS_NAV_MODE_SWITCH
     SETT_NAV_MODE,
 #endif
@@ -72,6 +75,9 @@ private:
   String _navSndSub;
 #endif
   String _colorSub;
+#ifdef T_EMBED_CC1101
+  String _ledModeSub;
+#endif
 #ifdef DEVICE_HAS_NAV_MODE_SWITCH
   String _navModeSub;
 #endif
@@ -102,6 +108,9 @@ private:
     {"Speaker Test"},
 #endif
     {"Primary Color",    ""},
+#ifdef T_EMBED_CC1101
+    {"LED Effect",       ""},
+#endif
 #ifdef DEVICE_HAS_NAV_MODE_SWITCH
     {"Navigation Mode",  ""},
 #endif

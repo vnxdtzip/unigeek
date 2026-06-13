@@ -49,6 +49,10 @@ static const uint8_t SCL = GROVE_SCL;
 #define ENCODER_BTN  0   // encoder push (active LOW)
 #define ENCODER_BK   6   // dedicated back button (active LOW)
 
+// ─── RGB LED ring (WS2812B) ───────────────────────────────
+#define RGB_LED     14   // addressable data pin
+#define LED_COUNT    8   // pixels in the ring
+
 // ─── Power ────────────────────────────────────────────────
 #define PIN_POWER_ON  15  // keep HIGH to stay powered
 

@@ -52,6 +52,8 @@
 #define APP_CONFIG_SCREEN_MIRROR_DEFAULT        "0"
 #define APP_CONFIG_WIKI_LANG                    "wiki_lang"
 #define APP_CONFIG_WIKI_LANG_DEFAULT            "en"
+#define APP_CONFIG_LED_MODE                     "led_mode"
+#define APP_CONFIG_LED_MODE_DEFAULT             "off"
 
 class ConfigManager
 {
