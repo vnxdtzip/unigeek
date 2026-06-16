@@ -7,6 +7,7 @@
 #include "core/IPower.h"
 #include "pins_arduino.h"
 #include <Wire.h>
+#include <esp_sleep.h>
 
 // ─── BQ27220 Fuel Gauge ───────────────────────────────────
 #define BQ27220_ADDR        0x55
@@ -15,7 +16,6 @@
 // ─── BQ25896 Charger ─────────────────────────────────────
 #define BQ25896_ADDR        0x6B
 #define BQ25896_REG_STATUS  0x0B
-#define BQ25896_REG_PON     0x09
 
 class PowerImpl : public IPower
 {
@@ -53,8 +53,17 @@ public:
 
   void powerOff() override
   {
-    uint8_t val = _readReg8(BQ25896_ADDR, BQ25896_REG_PON);
-    _writeReg(BQ25896_ADDR, BQ25896_REG_PON, val | 0x20);
+    // Backlight off so the screen is dark whether we cut power or just sleep.
+    digitalWrite(LCD_BL, LOW);
+
+    // Release the BQ25896 power latch. On battery this is a true power-off
+    // (the rail drops). On USB the BQ25896 keeps the rail alive, so we fall
+    // through into deep sleep as a low-power standby instead.
+    digitalWrite(PIN_POWER_ON, LOW);
+
+    // Wake on the back button (ENCODER_BK = GPIO6, active LOW).
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)ENCODER_BK, 0);
+    esp_deep_sleep_start();
   }
 
 private:
