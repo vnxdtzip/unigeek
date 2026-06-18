@@ -11,9 +11,11 @@ public:
   void onBack() override;
 
 private:
-  ListItem _items[3] = {
+  ListItem _items[5] = {
     {"Android Spam"},
     {"iOS Spam"},
     {"Samsung Spam"},
+    {"Windows Spam"},
+    {"Spam All"},
   };
 };
