@@ -5,8 +5,7 @@
 #include "core/Device.h"
 #include "core/ScreenManager.h"
 #include "screens/MainMenuScreen.h"
-#include "utils/HackerHead.h"   // hackerGetRank / RankInfo + hacker head art (default)
-#include "utils/CatHead.h"      // optional "cat" mascot, picked via APP_CONFIG_MASCOT
+#include "utils/Mascot.h"       // mascot registry (head art) + hackerGetRank / RankInfo
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 namespace {
@@ -289,10 +288,10 @@ void CharacterScreen::onRender()
   const int sec2Y = H - 1 - sec2H;
   const int halfW = (W - PAD * 2 - gap) / 2;
 
-  // Mascot head art is configurable; hacker (12×14) is the default, cat is 19×17.
-  const bool useCat  = Config.get(APP_CONFIG_MASCOT, APP_CONFIG_MASCOT_DEFAULT) == "cat";
-  const int headW = (useCat ? CAT_W : 12) * ps;
-  const int headH = (useCat ? CAT_H : 14) * ps;
+  // Mascot head art is configurable (see utils/Mascot.h); hacker is the default.
+  const Mascot& mascot = Mascot::current();
+  const int headW = mascot.w * ps;
+  const int headH = mascot.h * ps;
   const int headX = PAD + scale * 4;
   const int swayMax = scale * 3;          // head sway amplitude (px)
   const int midH  = sec2Y - midY;
@@ -407,8 +406,7 @@ void CharacterScreen::onRender()
     _mtxInto(hs, bandX, bandY, bandW, bandH, bandX, bandY,
              _matrixFrame, vrows, cw, chh, theme);
     const int hx = (headX - bandX) + swayX, hy = headY - bandY;
-    if (useCat) catDrawHead(hs, hx, hy, ps, _animFrame == 1);
-    else        hackerDrawHead(hs, hx, hy, ps, _animFrame == 1, ri.rank);
+    mascot.draw(hs, hx, hy, ps, _animFrame == 1, ri.rank);
     hs.pushSprite(bandX, bandY);
     hs.deleteSprite();
     _dirtyMask &= ~DIRTY_HEAD;

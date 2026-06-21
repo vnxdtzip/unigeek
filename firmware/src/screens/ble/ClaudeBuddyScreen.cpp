@@ -1,7 +1,6 @@
 #include "ClaudeBuddyScreen.h"
 #include "utils/ble/BuddyNus.h"
-#include "utils/HackerHead.h"   // hacker head art (default) + hackerGetRank
-#include "utils/CatHead.h"      // optional "cat" mascot, picked via APP_CONFIG_MASCOT
+#include "utils/Mascot.h"       // mascot registry (head art) + hackerGetRank
 #include "core/Device.h"
 #include "core/ScreenManager.h"
 #include "core/AchievementManager.h"
@@ -217,11 +216,13 @@ void ClaudeBuddyScreen::onRender() {
 
   const uint16_t kDialogH = bh - kFooterH - kGapH;
 
-  // ── Character column (mascot: hacker by default, cat optional) ────────────
-  const bool useCat = Config.get(APP_CONFIG_MASCOT, APP_CONFIG_MASCOT_DEFAULT) == "cat";
-  const int ps    = useCat ? (kCharColW - 2) / CAT_W : 3;   // fit the chosen art in the column
-  const int headW = (useCat ? CAT_W : 12) * ps;
-  const int headH = (useCat ? CAT_H : 14) * ps;
+  // ── Character column (mascot, see utils/Mascot.h; hacker is the default) ──
+  const Mascot& mascot = Mascot::current();
+  const int kHeadMaxH = 42;                  // vertical budget for the head art
+  // Fit the art into the column by both width and height so any mascot scales.
+  const int ps    = max(1, min((kCharColW - 2) / mascot.w, kHeadMaxH / mascot.h));
+  const int headW = mascot.w * ps;
+  const int headH = mascot.h * ps;
   const int artX  = (kCharColW - headW) / 2;
   const int artY  = 6;
 
@@ -234,8 +235,7 @@ void ClaudeBuddyScreen::onRender() {
   } else {
     blink = (_animTick & 7) < 1;
   }
-  if (useCat) catDrawHead(sp, artX, artY, ps, blink);
-  else        hackerDrawHead(sp, artX, artY, ps, blink, rank);
+  mascot.draw(sp, artX, artY, ps, blink, rank);
 
   uint16_t btnY      = (uint16_t)(artY + headH + 8);
   bool     hasPending = st.promptId[0] && !_responseSent;
