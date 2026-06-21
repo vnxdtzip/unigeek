@@ -5,8 +5,8 @@
 #include "core/Device.h"
 #include "core/ScreenManager.h"
 #include "screens/MainMenuScreen.h"
-#include "utils/HackerHead.h"   // hackerGetRank / RankInfo (rank label + colour)
-#include "utils/DevilHead.h"    // pixel-art devil mascot (replaces the head art)
+#include "utils/HackerHead.h"   // hackerGetRank / RankInfo + hacker head art (default)
+#include "utils/CatHead.h"      // optional "cat" mascot, picked via APP_CONFIG_MASCOT
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 namespace {
@@ -289,8 +289,10 @@ void CharacterScreen::onRender()
   const int sec2Y = H - 1 - sec2H;
   const int halfW = (W - PAD * 2 - gap) / 2;
 
-  const int headW = DEVIL_W * ps;
-  const int headH = DEVIL_H * ps;
+  // Mascot head art is configurable; hacker (12×14) is the default, cat is 19×17.
+  const bool useCat  = Config.get(APP_CONFIG_MASCOT, APP_CONFIG_MASCOT_DEFAULT) == "cat";
+  const int headW = (useCat ? CAT_W : 12) * ps;
+  const int headH = (useCat ? CAT_H : 14) * ps;
   const int headX = PAD + scale * 4;
   const int swayMax = scale * 3;          // head sway amplitude (px)
   const int midH  = sec2Y - midY;
@@ -394,17 +396,19 @@ void CharacterScreen::onRender()
     _dirtyMask &= ~DIRTY_TOP;
   }
 
-  // ── HEAD (devil: blinks + sways, over the Matrix — no black box) ──────
+  // ── HEAD (mascot: blinks + sways, over the Matrix — no black box) ─────
   if (_dirtyMask & DIRTY_HEAD) {
     static const int8_t kSway[12] = {0, 1, 2, 3, 2, 1, 0, -1, -2, -3, -2, -1};
     const int swayX = kSway[_swayPhase] * scale;
     Sprite hs(&Uni.Lcd);
     hs.createSprite(bandW, bandH);
     hs.fillSprite(TFT_BLACK);
-    // Matrix slice behind the head, so the rain shows around the devil
+    // Matrix slice behind the head, so the rain shows around the mascot
     _mtxInto(hs, bandX, bandY, bandW, bandH, bandX, bandY,
              _matrixFrame, vrows, cw, chh, theme);
-    devilDrawHead(hs, (headX - bandX) + swayX, headY - bandY, ps, _animFrame == 1);
+    const int hx = (headX - bandX) + swayX, hy = headY - bandY;
+    if (useCat) catDrawHead(hs, hx, hy, ps, _animFrame == 1);
+    else        hackerDrawHead(hs, hx, hy, ps, _animFrame == 1, ri.rank);
     hs.pushSprite(bandX, bandY);
     hs.deleteSprite();
     _dirtyMask &= ~DIRTY_HEAD;

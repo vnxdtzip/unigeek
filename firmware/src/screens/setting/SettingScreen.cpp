@@ -46,6 +46,7 @@ void SettingScreen::_refresh() {
   _navSndSub   = Config.get(APP_CONFIG_NAV_SOUND,            APP_CONFIG_NAV_SOUND_DEFAULT).toInt() ? "On" : "Off";
 #endif
   _colorSub    = Config.get(APP_CONFIG_PRIMARY_COLOR,        APP_CONFIG_PRIMARY_COLOR_DEFAULT);
+  _mascotSub   = Config.get(APP_CONFIG_MASCOT, APP_CONFIG_MASCOT_DEFAULT) == "cat" ? "Cat" : "Hacker";
 #ifdef DEVICE_T_EMBED_CC1101
   {
     String m = Config.get(APP_CONFIG_LED_MODE, APP_CONFIG_LED_MODE_DEFAULT);
@@ -83,6 +84,7 @@ void SettingScreen::_refresh() {
   _items[SETT_NAV_SOUND].sublabel = _navSndSub.c_str();
 #endif
   _items[SETT_COLOR].sublabel        = _colorSub.c_str();
+  _items[SETT_MASCOT].sublabel       = _mascotSub.c_str();
 #ifdef DEVICE_T_EMBED_CC1101
   _items[SETT_LED_MODE].sublabel     = _ledModeSub.c_str();
 #endif
@@ -220,6 +222,21 @@ void SettingScreen::onItemSelected(uint8_t index) {
         Config.save(Uni.Storage);
         int n = Achievement.inc("settings_color_changed");
         if (n == 1) Achievement.unlock("settings_color_changed");
+      }
+      _refresh();
+      break;
+    }
+
+    case SETT_MASCOT: {
+      static constexpr InputSelectAction::Option opts[] = {
+        {"Hacker", "hacker"},
+        {"Cat",    "cat"},
+      };
+      String      cur    = Config.get(APP_CONFIG_MASCOT, APP_CONFIG_MASCOT_DEFAULT);
+      const char* result = InputSelectAction::popup("Mascot", opts, 2, cur.c_str());
+      if (result != nullptr) {
+        Config.set(APP_CONFIG_MASCOT, result);
+        Config.save(Uni.Storage);
       }
       _refresh();
       break;
