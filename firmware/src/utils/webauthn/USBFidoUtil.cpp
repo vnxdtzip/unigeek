@@ -95,6 +95,14 @@ namespace {
 volatile uint32_t g_lastStopMs    = 0;
 volatile bool     g_mountedOnce   = false;
 volatile uint32_t g_lastKickLogMs = 0;
+// Set once the host exhibits the Windows webauthn.dll lifecycle quirk: it
+// unmounts (STOPPED) the FIDO interface after enumerating, which well-behaved
+// hosts — macOS, Linux, and Android over USB-OTG — never do mid-use. Until we
+// see it, we behave like a textbook FIDO key (no unsolicited bus traffic), which
+// is what those hosts expect; Android's CTAPHID reader in particular is far
+// pickier than the desktop stacks. Only after the quirk shows up do we switch on
+// the idle heartbeat below to survive Windows selective-suspend.
+volatile bool     g_winLifecycleQuirk = false;
 // Most recent CTAPHID frame from the host (any direction). poll() uses this
 // to decide whether to recover at "active" speed (300 ms) or "idle" speed
 // (5 s). Set in _onOutput on every received report.
@@ -120,6 +128,9 @@ void usbEventThunk(void*, esp_event_base_t base, int32_t event_id, void* event_d
       case ARDUINO_USB_STOPPED_EVENT:
         name = "STOPPED";
         g_lastStopMs = millis();
+        // A STOPPED after we've already mounted is the Windows post-exchange
+        // unmount signature — latch it so the idle heartbeat (poll()) engages.
+        if (g_mountedOnce) g_winLifecycleQuirk = true;
         break;
       case ARDUINO_USB_SUSPEND_EVENT:    name = "SUSPEND";    break;
       case ARDUINO_USB_RESUME_EVENT:     name = "RESUME";     break;
@@ -194,15 +205,21 @@ void USBFidoUtil::poll()
     tud_connect();
   }
 
-  // Idle-bus heartbeat. Send a 64-B all-zero IN report every 100 ms whenever
+  // Idle-bus heartbeat — ONLY once the Windows lifecycle quirk has shown up
+  // (g_winLifecycleQuirk). Send a 64-B all-zero IN report every 100 ms whenever
   // the device is mounted but not in an active CTAPHID session. CID 0 is
-  // reserved by CTAPHID spec, so any host that decodes the frame discards it
-  // — but the bus traffic itself prevents Windows from selective-suspending
-  // the endpoint. See keyboard analogy in the comment near g_lastBeatMs.
+  // reserved by the CTAPHID spec, so any host that decodes the frame discards it
+  // — but the bus traffic itself prevents Windows from selective-suspending the
+  // endpoint. See keyboard analogy in the comment near g_lastBeatMs.
+  //
+  // Gated so macOS / Linux / Android see a standards-clean key that emits no
+  // unsolicited reports (Android's reader rejects the unexpected traffic). The
+  // worst case before the quirk is latched is one Windows suspend/reconnect
+  // cycle, which the watchdog above already recovers.
   //
   // Suppress during real CTAP work (recentWork) so we never interleave with
   // a response in flight.
-  if (_started && !recentWork &&
+  if (_started && g_winLifecycleQuirk && !recentWork &&
       (uint32_t)(now - g_lastBeatMs) >= 100) {
     static const uint8_t kBeat[kHidReportSize] = {0};
     if (_hid.SendReport(FIDO_REPORT_ID, (uint8_t*)kBeat, kHidReportSize)) {
