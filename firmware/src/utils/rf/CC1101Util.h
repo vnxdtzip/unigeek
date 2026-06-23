@@ -89,11 +89,11 @@ public:
 
   // ── Frequency analyzer (Flipper-style "peaky" peak detect) ────────────────
   // Call analyzeStep() once per frame. Each call runs a full coarse sweep
-  // across the whole band (also fills the RSSI map) then, if the strongest
-  // channel passes kAnalyzerTrigger, a fine refine (±0.3 MHz @ 20 kHz) to pin
-  // the exact frequency. The last peak is held for kAnalyzerHold frames after
-  // the signal disappears so it stays on screen instead of vanishing the
-  // instant the carrier drops.
+  // across the whole band (wide RxBW — also fills the RSSI map that drives the
+  // bar chart) then, if the strongest channel passes kAnalyzerTrigger, a fine
+  // refine (narrow RxBW, ±0.3 MHz @ 20 kHz) to pin the exact frequency. The
+  // last peak is held for kAnalyzerHold frames after the signal disappears so
+  // it stays on screen instead of vanishing the instant the carrier drops.
   void  beginAnalyze();
   bool  analyzeStep();                       // true while a peak is held
   void  endAnalyze();
@@ -124,6 +124,9 @@ public:
   static String saveToString(const Signal& sig);
 
   // Display helpers
+  // Friendly name for an RcSwitch protocol number (preset), or nullptr when the
+  // protocol has no well-known chip name (the generic table entries 2-5).
+  static const char* rcSwitchProtoName(int proto);
   static String signalLabel(const Signal& sig);
   // Multi-line, key:value info block (mirrors Bruce's `display_signal_data`).
   // Ready to feed into TextScrollView::setContent.
@@ -157,4 +160,6 @@ private:
   void  _initTx();
   void  _initRx();
   void  _sendRcSwitch(const Signal& sig);
+  // Fill `out` from the current RCSwitch decode (incl. KeeLoq proto-23 unpack).
+  void  _fillRcSwitch(Signal& out);
 };

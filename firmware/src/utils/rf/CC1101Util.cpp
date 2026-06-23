@@ -6,6 +6,7 @@
 #include "CC1101Util.h"
 #include "RCSwitchUtil.h"
 #include "KeeloqUtil.h"
+#include "SubGhzDecoders.h"
 #include <ELECHOUSE_CC1101_SRC_DRV.h>
 
 // ── Frequency list (Bruce rf_utils.cpp) ─────────────────────────────────────
@@ -137,42 +138,73 @@ bool CC1101Util::beginReceive() {
   return true;
 }
 
+void CC1101Util::_fillRcSwitch(Signal& out) {
+  uint64_t val = _sw.getReceivedValue();
+  out.frequency = _freq;
+  out.key       = val;
+  out.preset    = String(_sw.getReceivedProtocol());
+  out.protocol  = "RcSwitch";
+  out.te        = (int)_sw.getReceivedDelay();
+  out.bit       = (int)_sw.getReceivedBitlength();
+  out.rawData   = "";
+  // KeeLoq auto-decode: protocol 23 frames carry fix+encrypted+btn+serial packed
+  // into a 64-bit value. Unpack the structured fields, then try the manufacturer
+  // keystore (no-op if /unigeek/mfcodes is missing).
+  if (_sw.getReceivedProtocol() == 23) {
+    KeeloqUtil::unpack(val, out.fix, out.encrypted, out.btn, out.serial);
+    KeeloqUtil::identify(out);
+  }
+}
+
 bool CC1101Util::pollReceive(Signal& out) {
   if (!_initialized) return false;
 
-  if (_sw.available()) {
-    uint64_t val = _sw.getReceivedValue();
-    if (val != 0) {
-      out.frequency = _freq;
-      out.key       = val;
-      out.preset    = String(_sw.getReceivedProtocol());
-      out.protocol  = "RcSwitch";
-      out.te        = (int)_sw.getReceivedDelay();
-      out.bit       = (int)_sw.getReceivedBitlength();
-      out.rawData   = "";
-      // KeeLoq auto-decode: protocol 23 frames carry fix+encrypted+btn+serial
-      // packed into a 64-bit value. Always unpack the structured fields; then
-      // try the manufacturer keystore (no-op if /unigeek/mfcodes is missing).
-      if (_sw.getReceivedProtocol() == 23) {
-        KeeloqUtil::unpack(val, out.fix, out.encrypted, out.btn, out.serial);
-        KeeloqUtil::identify(out);
-      }
-      _sw.resetAvailable();
-      return true;
-    }
+  // KeeLoq (RcSwitch proto 23) stays on the fast path: it's a rolling protocol
+  // that needs the manufacturer keystore and has no brand decoder of its own.
+  // Emitting it here also stops the brand decoders from ever mis-grabbing a
+  // KeeLoq frame.
+  if (_sw.available() && _sw.getReceivedValue() != 0 &&
+      _sw.getReceivedProtocol() == 23) {
+    _fillRcSwitch(out);
     _sw.resetAvailable();
+    return true;
   }
 
-  if (_rxFilter == RX_FILTER_RAW && _sw.RAWavailable()) {
-    delay(400); // let full signal arrive
+  // Everything else is decided on the COMPLETED raw frame so the brand decoders
+  // are AUTHORITATIVE: they identify the real protocol (CAME, Holtek, Linear,
+  // ...) and win over the generic RcSwitch table for overlapping protocols.
+  // RcSwitch is the fallback when no brand decoder matches; generic RAW is last.
+  if (_sw.RAWavailable()) {
+    delay(400); // let the full repeating signal land in the buffer
     unsigned int* raw = _sw.getRAWReceivedRawdata();
+    uint16_t n = 0;
+    while (raw[n] != 0 && n < 1024) n++;
+
     String rawStr;
-    for (int i = 0; raw[i] != 0; i++) {
+    for (uint16_t i = 0; i < n; i++) {
       if (i > 0) rawStr += ' ';
       int sign = (i % 2 == 0) ? 1 : -1;
       rawStr += String(sign * (int)raw[i]);
     }
-    if (rawStr.length() > 0) {
+
+    // 1) Brand/manufacturer decoders — authoritative, both filter modes. The raw
+    //    stream is kept on the Signal so it can still be replayed.
+    if (n >= 8 && SubGhzDecoders::decode(raw, n, out)) {
+      out.frequency = _freq;
+      out.rawData   = rawStr;
+      _sw.resetAvailable();
+      return true;
+    }
+
+    // 2) RcSwitch table decode (if the ISR recognised one of its 23 protocols).
+    if (_sw.available() && _sw.getReceivedValue() != 0) {
+      _fillRcSwitch(out);
+      _sw.resetAvailable();
+      return true;
+    }
+
+    // 3) Generic RAW capture — only when the user enabled raw capture.
+    if (_rxFilter == RX_FILTER_RAW && rawStr.length() > 0) {
       out.frequency = _freq;
       out.preset    = "0";
       out.protocol  = "RAW";
@@ -378,7 +410,11 @@ void CC1101Util::sendSignal(const Signal& sig) {
   ELECHOUSE_cc1101.setPA(12);
   ELECHOUSE_cc1101.SetTx();
 
-  if (sig.protocol == "RAW") {
+  // Brand-decoded signals (CAME, Holtek, ...) keep their captured raw pulse
+  // train and are replayed from it — we decode these protocols but have no
+  // dedicated encoder, so RCSwitch re-encoding would transmit the wrong timing.
+  // Only true RcSwitch protocols go through the RCSwitch library.
+  if (sig.protocol != "RcSwitch" && sig.rawData.length() > 0) {
     const String& data = sig.rawData;
     int start = 0;
     for (int i = 0; i <= (int)data.length(); i++) {
@@ -399,7 +435,6 @@ void CC1101Util::sendSignal(const Signal& sig) {
     digitalWrite(_gdo0Pin, LOW);
 
   } else {
-    // RcSwitch / Princeton / CAME / Nice / unknown → RCSwitch library
     _sendRcSwitch(sig);
   }
 
@@ -528,7 +563,13 @@ String CC1101Util::saveToString(const Signal& sig) {
   content += "Preset: " + sig.preset + "\n";
   content += "Protocol: " + sig.protocol + "\n";
 
-  if (sig.protocol == "RcSwitch") {
+  const bool isRcSwitch = (sig.protocol == "RcSwitch");
+  // Brand-decoded signals carry a numeric Key + bit length just like RcSwitch;
+  // write the structured header so the capture round-trips (loadFile keys off
+  // Key/Bit). They additionally keep the raw pulse train below for replay.
+  const bool hasHeader = isRcSwitch || (sig.protocol != "RAW" && sig.bit > 0);
+
+  if (hasHeader) {
     if (sig.te > 0)  content += "TE: "  + String(sig.te)  + "\n";
     if (sig.bit > 0) content += "Bit: " + String(sig.bit) + "\n";
     char keyBuf[20];
@@ -537,7 +578,7 @@ String CC1101Util::saveToString(const Signal& sig) {
 
     // KeeLoq extras when the manufacturer was identified at capture time —
     // Flipper Zero .sub spec fields, also recognised by Bruce's reader.
-    if (sig.preset == "23" && sig.mf_name.length() > 0) {
+    if (isRcSwitch && sig.preset == "23" && sig.mf_name.length() > 0) {
       content += "Manufacturer: " + sig.mf_name + "\n";
       char hexBuf[16];
       snprintf(hexBuf, sizeof(hexBuf), "0x%07lX", (unsigned long)sig.serial);
@@ -545,8 +586,12 @@ String CC1101Util::saveToString(const Signal& sig) {
       content += "Button: " + String(sig.btn) + "\n";
       content += "Counter: " + String(sig.cnt) + "\n";
     }
-  } else {
-    // RAW: split into lines of max 512 values (Flipper compat)
+  }
+
+  // RAW pulse train — emitted for true RAW captures and for brand-decoded
+  // signals (kept for replay, since we have no per-protocol encoder). RcSwitch
+  // is re-encoded from Key and needs none.
+  if (!isRcSwitch && sig.rawData.length() > 0) {
     const String& data = sig.rawData;
     int valCount = 0;
     int lineStart = 0;
@@ -607,13 +652,22 @@ String CC1101Util::signalInfoText(const Signal& sig) {
     return out;
   }
 
-  // Protocol line (Bruce shows "Protocol: <name>(<preset>)" when preset is set)
-  if (sig.preset.length() > 0)
+  // Protocol line. For RcSwitch, show the chip/remote name when known
+  // (e.g. "Protocol: HT6P20B (P6)") instead of the opaque protocol number.
+  const char* rcName = (sig.protocol == "RcSwitch") ? rcSwitchProtoName(sig.preset.toInt()) : nullptr;
+  if (rcName)
+    out += "Protocol: " + String(rcName) + " (P" + sig.preset + ")\n";
+  else if (sig.preset.length() > 0)
     out += "Protocol: " + sig.protocol + " (" + sig.preset + ")\n";
   else
     out += "Protocol: " + sig.protocol + "\n";
 
-  if (sig.protocol == "RcSwitch") {
+  // RcSwitch and brand-decoded signals both carry a numeric key + bit length;
+  // show the structured Key/Binary breakdown for either. Only true RAW captures
+  // (no decoded bits) fall through to the transition dump below.
+  bool decoded = (sig.protocol == "RcSwitch") ||
+                 (sig.protocol != "RAW" && sig.bit > 0);
+  if (decoded) {
     out += "Length: " + String(sig.bit) + " bits\n";
     snprintf(buf, sizeof(buf), "Key: 0x%llX\n", (unsigned long long)sig.key);
     out += buf;
@@ -655,12 +709,44 @@ String CC1101Util::signalInfoText(const Signal& sig) {
   return out;
 }
 
+// Chip/remote names for the 23 RcSwitch protocols (see kProto in RCSwitchUtil).
+// Entries 2-5 are generic timing variants with no well-known name → nullptr.
+const char* CC1101Util::rcSwitchProtoName(int proto) {
+  switch (proto) {
+    case 1:  return "Princeton";
+    case 6:  return "HT6P20B";
+    case 7:  return "HS2303-PT";
+    case 8:  return "Conrad RS-200 RX";
+    case 9:  return "Conrad RS-200 TX";
+    case 10: return "1ByOne Doorbell";
+    case 11: return "HT12E";
+    case 12: return "SM5212";
+    case 13: return "Mumbi RC-10";
+    case 14: return "Blyss Doorbell";
+    case 15: return "sc2260R4";
+    case 16: return "Home NetWerks";
+    case 17: return "ORNO OR-GB";
+    case 18: return "CLARUS BHC993";
+    case 19: return "NEC";
+    case 20: return "CAME 12bit";
+    case 21: return "FAAC 12bit";
+    case 22: return "NICE 12bit";
+    case 23: return "KeeLoq";
+    default: return nullptr;  // generic table entries 2-5
+  }
+}
+
 String CC1101Util::signalLabel(const Signal& sig) {
-  char buf[40];
+  char buf[48];
   if (sig.protocol == "RcSwitch") {
-    snprintf(buf, sizeof(buf), "%.2f MHz P%s", sig.frequency, sig.preset.c_str());
-  } else {
+    const char* pname = rcSwitchProtoName(sig.preset.toInt());
+    if (pname) snprintf(buf, sizeof(buf), "%.2f MHz %s", sig.frequency, pname);
+    else       snprintf(buf, sizeof(buf), "%.2f MHz P%s", sig.frequency, sig.preset.c_str());
+  } else if (sig.protocol == "RAW") {
     snprintf(buf, sizeof(buf), "%.2f MHz RAW", sig.frequency);
+  } else {
+    // Brand-decoded signal — show the real protocol name (CAME, Holtek, ...).
+    snprintf(buf, sizeof(buf), "%.2f MHz %s", sig.frequency, sig.protocol.c_str());
   }
   return String(buf);
 }
