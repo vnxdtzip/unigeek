@@ -390,7 +390,9 @@ void IRScreen::_loadBrowseDir(const String& path) {
   if (path == kRootPath) folderName = "IR Files";
   snprintf(_titleBuf, sizeof(_titleBuf), "%s", folderName.c_str());
 
-  _browser.root = kRootPath;
+  // Root at "/" so a ".." row is shown even at kRootPath, letting the picker
+  // climb to the SD card and reach .ir files outside /unigeek/ir.
+  _browser.root = "/";
   uint8_t n = _browser.load(this, path, ".ir");
 
   if (n == 0 && path == kRootPath) {
