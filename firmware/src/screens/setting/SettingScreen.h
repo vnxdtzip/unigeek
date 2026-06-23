@@ -36,7 +36,7 @@ private:
 #endif
     SETT_COLOR,
     SETT_MASCOT,
-#ifdef DEVICE_T_EMBED_CC1101
+#ifdef DEVICE_HAS_LED_RING
     SETT_LED_MODE,
 #endif
 #ifdef DEVICE_HAS_NAV_MODE_SWITCH
@@ -77,7 +77,7 @@ private:
 #endif
   String _colorSub;
   String _mascotSub;
-#ifdef DEVICE_T_EMBED_CC1101
+#ifdef DEVICE_HAS_LED_RING
   String _ledModeSub;
 #endif
 #ifdef DEVICE_HAS_NAV_MODE_SWITCH
@@ -111,7 +111,7 @@ private:
 #endif
     {"Primary Color",    ""},
     {"Mascot",           ""},
-#ifdef DEVICE_T_EMBED_CC1101
+#ifdef DEVICE_HAS_LED_RING
     {"LED Effect",       ""},
 #endif
 #ifdef DEVICE_HAS_NAV_MODE_SWITCH

@@ -48,7 +48,7 @@ void SettingScreen::_refresh() {
 #endif
   _colorSub    = Config.get(APP_CONFIG_PRIMARY_COLOR,        APP_CONFIG_PRIMARY_COLOR_DEFAULT);
   _mascotSub   = Mascot::current().label;
-#ifdef DEVICE_T_EMBED_CC1101
+#ifdef DEVICE_HAS_LED_RING
   {
     String m = Config.get(APP_CONFIG_LED_MODE, APP_CONFIG_LED_MODE_DEFAULT);
     _ledModeSub = m == "solid"   ? "Solid"
@@ -86,7 +86,7 @@ void SettingScreen::_refresh() {
 #endif
   _items[SETT_COLOR].sublabel        = _colorSub.c_str();
   _items[SETT_MASCOT].sublabel       = _mascotSub.c_str();
-#ifdef DEVICE_T_EMBED_CC1101
+#ifdef DEVICE_HAS_LED_RING
   _items[SETT_LED_MODE].sublabel     = _ledModeSub.c_str();
 #endif
 #ifdef DEVICE_HAS_NAV_MODE_SWITCH
@@ -247,7 +247,7 @@ void SettingScreen::onItemSelected(uint8_t index) {
       break;
     }
 
-#ifdef DEVICE_T_EMBED_CC1101
+#ifdef DEVICE_HAS_LED_RING
     case SETT_LED_MODE: {
       static constexpr InputSelectAction::Option opts[] = {
         {"Off",     "off"},

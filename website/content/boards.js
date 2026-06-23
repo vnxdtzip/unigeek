@@ -258,6 +258,27 @@ export const BOARDS = [
     ],
   },
   {
+    id: "reaper",
+    name: "RF Reaper",
+    chip: "ESP32-S3",
+    tags: ["WiFi", "BLE", "IR", "Sub-GHz", "NRF24L01", "RGB", "USB HID"],
+    port: "USB-C (native)",
+    baud: 460800,
+    bootloader: "Hold BOOT + tap RST",
+    storage: "SD + LittleFS",
+    bootNotes: "Smoochiee Sub-GHz handheld. CC1101 + NRF24 share the display SPI bus; antenna required for Sub-GHz TX. 16-px WS2812B ring (Settings → LED Effect).",
+    nav: [
+      ["Buttons", [
+        { input: "BTN_UP", action: "Up" },
+        { input: "BTN_DOWN", action: "Down" },
+        { input: "BTN_LEFT", action: "Left" },
+        { input: "BTN_RIGHT", action: "Right" },
+        { input: "BTN_SEL — center button", action: "Select" },
+        { input: "ESC button", action: "Back" },
+      ], "Dedicated ESC/Back button — no LEFT-hold needed."],
+    ],
+  },
+  {
     id: "cyd_2432s028",
     name: "CYD 2432S028",
     chip: "ESP32",
