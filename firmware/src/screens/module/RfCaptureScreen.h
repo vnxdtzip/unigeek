@@ -99,6 +99,11 @@ protected:
   virtual bool _onItemSelectedExtra(uint8_t /*idx*/) { return false; }
   virtual bool _inhibitExtra() const        { return false; }
 
+  // OK pressed while receiving. Default: open the selected capture's options
+  // (when one is selected). Derived may override to add a settings menu that
+  // is reachable even with no captured signal yet.
+  virtual void _onReceiveOk(uint8_t index);
+
   // ── Shared helpers (called by base + reusable by derived) ──────────────
   void   _enterReceiveMode();
   void   _enterJammingMode();

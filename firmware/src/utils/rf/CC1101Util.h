@@ -25,6 +25,14 @@ public:
     RX_FILTER_RAW,
   };
 
+  // Receive mode — applied by pollReceive().
+  //   RX_MODE_DECODE: attempt RCSwitch protocol decode on every detected signal.
+  //   RX_MODE_RAW   : never decode; capture raw pulse streams only.
+  enum RxMode {
+    RX_MODE_RAW,
+    RX_MODE_DECODE,
+  };
+
   struct Signal {
     float frequency = 0;     // MHz
     String preset = "0";     // modulation preset name or RcSwitch protocol number
@@ -72,6 +80,9 @@ public:
   void     setRxFilter(RxFilter f) { _rxFilter = f; }
   RxFilter getRxFilter() const     { return _rxFilter; }
 
+  void     setRxMode(RxMode m) { _rxMode = m; }
+  RxMode   getRxMode() const   { return _rxMode; }
+
   // Non-blocking frequency scan:
   //   1. call beginScan() once when entering scan state
   //   2. call stepScan() every frame — returns true when a signal is detected
@@ -117,6 +128,7 @@ private:
 
   RCSwitchUtil _sw;  // persistent receiver state for non-blocking polling
   RxFilter     _rxFilter = RX_FILTER_CODE;
+  RxMode       _rxMode   = RX_MODE_DECODE;
 
   // Scan status (updated during receive/scan)
   bool    _scanning = false;

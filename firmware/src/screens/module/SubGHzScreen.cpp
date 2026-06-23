@@ -198,6 +198,57 @@ void SubGHzScreen::_selectFrequency() {
   render();
 }
 
+// ── Receive OK menu (Bruce-style: Mode + Filter) ─────────────────────────────
+//
+// Receive starts directly into "Waiting for signal...". Pressing OK opens this
+// popup. Mirrors Bruce's select_menu_option(): toggling Mode/Filter re-opens
+// the menu so the new value is visible; "Signal options" (only when a captured
+// row is selected) hands off to the base per-signal popup; "Close" resumes.
+void SubGHzScreen::_onReceiveOk(uint8_t index) {
+  bool hasSignal = index < _capturedCount;
+
+  while (true) {
+    const char* modeLabel   = (_rf.getRxMode() == CC1101Util::RX_MODE_DECODE)
+                              ? "Mode: Decode" : "Mode: RAW";
+    const char* filterLabel = (_rf.getRxFilter() == CC1101Util::RX_FILTER_CODE)
+                              ? "Filter: Code" : "Filter: Raw";
+
+    InputSelectAction::Option opts[4];
+    uint8_t n = 0;
+    if (hasSignal) opts[n++] = {"Signal options", "signal"};
+    opts[n++] = {modeLabel,   "mode"};
+    opts[n++] = {filterLabel, "filter"};
+    opts[n++] = {"Close",     "close"};
+
+    const char* choice = InputSelectAction::popup("Receive", opts, n);
+    if (!choice) break;  // cancelled
+
+    if (strcmp(choice, "mode") == 0) {
+      _rf.setRxMode(_rf.getRxMode() == CC1101Util::RX_MODE_DECODE
+                    ? CC1101Util::RX_MODE_RAW : CC1101Util::RX_MODE_DECODE);
+      if (Uni.Speaker) Uni.Speaker->beep();
+      continue;  // reopen with updated label
+    }
+    if (strcmp(choice, "filter") == 0) {
+      _rf.setRxFilter(_rf.getRxFilter() == CC1101Util::RX_FILTER_CODE
+                      ? CC1101Util::RX_FILTER_RAW : CC1101Util::RX_FILTER_CODE);
+      if (Uni.Speaker) Uni.Speaker->beep();
+      continue;  // reopen with updated label
+    }
+    if (strcmp(choice, "signal") == 0) {
+      _handleCaptureSelection(index);  // own popups + render
+    }
+    break;  // "close", "signal", or anything else
+  }
+
+  // Re-arm RX (a Full buffer detached it) and force a clean redraw — the popup
+  // overlay covered the screen, and the count==0 waiting view would otherwise
+  // be skipped by the _chromeDrawn guard, leaving a black screen.
+  if (_capturedCount < kMaxCapture) _radioBeginReceive();
+  _chromeDrawn = false;
+  render();
+}
+
 // ── Frequency scan (STATE_SCANNING) ─────────────────────────────────────────
 
 void SubGHzScreen::_startScan() {

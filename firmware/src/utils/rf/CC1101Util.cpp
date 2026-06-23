@@ -140,7 +140,7 @@ bool CC1101Util::beginReceive() {
 bool CC1101Util::pollReceive(Signal& out) {
   if (!_initialized) return false;
 
-  if (_sw.available()) {
+  if (_rxMode == RX_MODE_DECODE && _sw.available()) {
     uint64_t val = _sw.getReceivedValue();
     if (val != 0) {
       out.frequency = _freq;
@@ -163,7 +163,9 @@ bool CC1101Util::pollReceive(Signal& out) {
     _sw.resetAvailable();
   }
 
-  if (_rxFilter == RX_FILTER_RAW && _sw.RAWavailable()) {
+  // Raw pulse capture: always in RAW mode; in DECODE mode only when the filter
+  // is set to RAW (CODE filter drops anything no protocol matched).
+  if ((_rxMode == RX_MODE_RAW || _rxFilter == RX_FILTER_RAW) && _sw.RAWavailable()) {
     delay(400); // let full signal arrive
     unsigned int* raw = _sw.getRAWReceivedRawdata();
     String rawStr;

@@ -70,6 +70,9 @@ void RfCaptureScreen::onUpdate() {
         render();
       } else if (dir == INavigation::DIR_BACK) {
         onBack();
+      } else if (dir == INavigation::DIR_PRESS) {
+        // OK opens the receive menu — available even before any capture.
+        onItemSelected(_selectedIndex);
       } else if (_capturedCount > 0) {
         if (dir == INavigation::DIR_UP) {
           _selectedIndex = (_selectedIndex == 0) ? _capturedCount - 1 : _selectedIndex - 1;
@@ -79,8 +82,6 @@ void RfCaptureScreen::onUpdate() {
           _selectedIndex = (_selectedIndex >= _capturedCount - 1) ? 0 : _selectedIndex + 1;
           setCount(_capturedCount);
           render();
-        } else if (dir == INavigation::DIR_PRESS) {
-          onItemSelected(_selectedIndex);
         }
       }
       return;
@@ -229,11 +230,7 @@ void RfCaptureScreen::onItemSelected(uint8_t index) {
   }
 
   if (_state == STATE_RECEIVING) {
-    if (index < _capturedCount) {
-      _handleCaptureSelection(index);
-      // If a deletion freed a slot and receive was stopped, restart it.
-      if (_capturedCount < kMaxCapture) _radioBeginReceive();
-    }
+    _onReceiveOk(index);
     return;
   }
 
@@ -245,6 +242,14 @@ void RfCaptureScreen::onItemSelected(uint8_t index) {
     }
     _showBrowseOptions(index);
     return;
+  }
+}
+
+void RfCaptureScreen::_onReceiveOk(uint8_t index) {
+  if (index < _capturedCount) {
+    _handleCaptureSelection(index);
+    // If a deletion freed a slot and receive was stopped, restart it.
+    if (_capturedCount < kMaxCapture) _radioBeginReceive();
   }
 }
 
@@ -275,6 +280,10 @@ void RfCaptureScreen::_enterJammingMode() {
 void RfCaptureScreen::_showReceiveList() {
   snprintf(_titleBuf, sizeof(_titleBuf), "%s RX (%d/%d)",
            _titlePrefix(), _capturedCount, kMaxCapture);
+  // Back to an empty list (last signal deleted): the count==0 render path is
+  // gated by _chromeDrawn, so clear it to force the "Waiting..." view to redraw
+  // instead of leaving the stale list / popup remnants on screen.
+  if (_capturedCount == 0) _chromeDrawn = false;
   _rebuildCapturedItems();
   setCount(_capturedCount);
   render();

@@ -43,6 +43,10 @@ protected:
   bool _onBackExtra()               override;
   bool _inhibitExtra() const        override { return _state == STATE_SCANNING; }
 
+  // Bruce-style OK menu shown during receive (Mode + Filter, plus the
+  // captured-signal actions when a row is selected).
+  void _onReceiveOk(uint8_t index)  override;
+
 private:
   CC1101Util _rf;
   int8_t _csPin   = -1;
