@@ -49,7 +49,7 @@ Trust order if they disagree: **source code > Obsidian notes > CLAUDE.md**.
     m5stickcplus_11   m5stickcplus_2   t_lora_pager
     t_display         t_display_s3     diy_smoochie
     m5_cardputer      m5_cardputer_adv t_embed_cc1101
-    m5_cores3_unified m5sticks3
+    m5_cores3_unified m5sticks3        reaper
     cyd_2432w328r  cyd_2432s028  cyd_2432s028_2usb
     cyd_2432w328c  cyd_2432w328c_2  cyd_3248s035r  cyd_3248s035c
 
