@@ -29,6 +29,27 @@ static bool                  _inited    = false;
 static volatile int       _txPending     = 0;
 static constexpr int      TX_MAX_PENDING = 4;
 
+// Outbound TX ring. _sendBytes() enqueues without blocking (it runs on the main
+// loop AND on whatever task drew a mirrored region); _drainTx() flushes notifies
+// from update() as mbufs free. This replaces the old per-chunk delay()s that
+// stalled the device's main loop — the _txPending cap (4 < ~12 mbufs) is the flow
+// control. Allocated on begin(), freed on end() (zero RAM when BLE is off).
+static constexpr size_t   TX_RING  = 8192;
+static uint8_t*           _txBuf   = nullptr;
+static volatile size_t    _txHeadW = 0;     // producer (enqueue, under TX lock)
+static volatile size_t    _txTailW = 0;     // consumer (drain, main loop)
+static uint32_t           _fbRemain = 0;    // bytes left in the current frame
+static bool               _fbDrop   = false; // whole current frame is being dropped
+
+static inline size_t _txUsed() { return (_txHeadW - _txTailW + TX_RING) % TX_RING; }
+static inline size_t _txFree() { return TX_RING - 1 - _txUsed(); }
+
+static inline void _ringPut(const uint8_t* d, size_t n) {
+  size_t head = _txHeadW;
+  for (size_t i = 0; i < n; i++) { _txBuf[head] = d[i]; head = (head + 1) % TX_RING; }
+  _txHeadW = head; // publish after the bytes are staged
+}
+
 class _BleFmSrvCb : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer*) override {
     _connected = true;
@@ -72,38 +93,49 @@ static _BleFmSrvCb _srvCb;
 static _BleFmRxCb  _rxCb;
 static _BleFmTxCb  _txCb;
 
+// Enqueue a frame's bytes WITHOUT blocking the caller. sendFrame() always emits a
+// frame as header(9) → payload → crc(4) under the shared TX lock, so we recognise
+// the 9-byte SOF header, read its declared payload length, and reserve the WHOLE
+// frame up front. If it won't fit we drop the entire frame (header included) — a
+// partial frame would desync the host parser and eat following frames. FM frames
+// are produced only when update() sees ring room, so they never drop; only
+// oversized mirror frames drop under congestion (the next render supersedes them).
 void BleFileManager::_sendBytes(const uint8_t* data, size_t len) {
-  if (!_connected || !_txChar) return;
-  // With MTU 247 negotiated, max ATT payload is 244. The core sizes GET
-  // frames to fit in one notify (220 + 13 header = 233 bytes) so no
-  // fragmentation under normal load — single notify, single LL packet,
-  // single mbuf consumed per frame.
-  constexpr size_t MAX_NOTIFY = 240;
-  size_t off = 0;
-  while (off < len) {
-    // Soft backpressure: if the host has queued frames the radio hasn't
-    // confirmed yet, wait briefly. _txPending is decremented in onStatus
-    // for SUCCESS_NOTIFY *and* ERROR_GATT so the counter can't wedge.
-    unsigned long waitStart = millis();
-    while (_txPending >= TX_MAX_PENDING) {
-      delay(2);
-      if (!_connected) return;
-      if (millis() - waitStart > 2000) {  // safety: never wedge forever
-        _txPending = 0;
-        break;
-      }
+  if (!_connected || !_txChar || !_txBuf || len == 0) return;
+
+  if (_fbRemain == 0) {
+    // Expect a frame header: A5 5A | ctx type seq | len[4 LE].
+    if (len == 9 && data[0] == 0xA5 && data[1] == 0x5A) {
+      uint32_t pl = (uint32_t)data[5] | ((uint32_t)data[6] << 8)
+                  | ((uint32_t)data[7] << 16) | ((uint32_t)data[8] << 24);
+      _fbRemain = pl + 4;                      // payload + crc still to come
+      _fbDrop   = ((uint32_t)(9 + pl + 4) > _txFree());
+      if (!_fbDrop) _ringPut(data, len);       // stage the header
     }
-    size_t n = len - off;
-    if (n > MAX_NOTIFY) n = MAX_NOTIFY;
-    _txChar->setValue(data + off, n);
+    return;
+  }
+
+  // Mid-frame: payload then crc. Append, or skip if this frame is being dropped.
+  _fbRemain = (len >= _fbRemain) ? 0 : (_fbRemain - (uint32_t)len);
+  if (!_fbDrop) _ringPut(data, len);
+}
+
+// Flush queued bytes to the radio from the main loop. Sends up to TX_MAX_PENDING
+// notifications per call; the rest go out on later update()s as onStatus() frees
+// mbufs. Flow control is the mbuf counter, not a busy-wait, so the loop never blocks.
+static void _drainTx() {
+  if (!_connected || !_txChar || !_txBuf) return;
+  uint8_t tmp[240];
+  while (_txPending < TX_MAX_PENDING && _txHeadW != _txTailW) {
+    size_t n = 0, tail = _txTailW;
+    while (n < sizeof(tmp) && tail != _txHeadW) {
+      tmp[n++] = _txBuf[tail];
+      tail = (tail + 1) % TX_RING;
+    }
+    _txTailW = tail;
+    _txChar->setValue(tmp, n);
     _txPending++;
     _txChar->notify();
-    off += n;
-    // Flat pacing — one notify per ~one BLE connection interval. Without
-    // this we submit faster than the radio can drain even with backpressure
-    // and the mbuf pool ENOMEMs. 15 ms matches Chrome's default 15-30 ms
-    // connection interval.
-    delay(15);
   }
 }
 
@@ -139,6 +171,10 @@ void BleFileManager::begin(const char* deviceName) {
   adv->start();
 
   _rxHead = _rxTail = 0;
+  if (!_txBuf) _txBuf = (uint8_t*)malloc(TX_RING);
+  _txHeadW = _txTailW = 0;
+  _fbRemain = 0; _fbDrop = false;
+  _txPending = 0;
   _connected = false;
   _inited = true;
   _active = true;
@@ -166,6 +202,9 @@ void BleFileManager::end() {
   _txChar    = nullptr;
   _connected = false;
   _rxHead = _rxTail = 0;
+  if (_txBuf) { free(_txBuf); _txBuf = nullptr; }
+  _txHeadW = _txTailW = 0;
+  _fbRemain = 0; _fbDrop = false;
   _inited = false;
   _active = false;
   _wasConnected = false;
@@ -185,6 +224,7 @@ void BleFileManager::update() {
     _core.reset();
     _scr.stop();
     _scr.resetParser();
+    _txHeadW = _txTailW = 0; _fbRemain = 0; _fbDrop = false; // drop any half-sent frame
   }
   _wasConnected = _connected;
   while (_rxHead != _rxTail) {
@@ -193,12 +233,11 @@ void BleFileManager::update() {
     _core.onByte(b);  // ctx 'F'
     _scr.onByte(b);   // ctx 'S' (each codec ignores the other's frames)
   }
-  // Only invite the core to emit another GET chunk if the TX queue has
-  // room. Without this gate, pump() runs at main-loop rate and pumps a new
-  // frame every ~1 ms — far faster than the BLE host can drain — and
-  // notifications start dropping.
-  if (_txPending < TX_MAX_PENDING) {
+  // Invite more output only when the ring has room for a full FM frame, so a GET
+  // chunk is produced (and thus never dropped) only when it will fit.
+  if (_txFree() > 256) {
     _core.pump();
     _scr.pump(); // flush mirror dirty region (no-op in region mode / when idle)
   }
+  _drainTx(); // push whatever's queued to the radio — non-blocking
 }
