@@ -50,6 +50,8 @@ import run.xid.unigeek.feature.remote.BoardNav
 import run.xid.unigeek.feature.remote.BoardNavs
 import run.xid.unigeek.protocol.Proto
 import run.xid.unigeek.transport.TransportKind
+import run.xid.unigeek.ui.components.BadgeKind
+import run.xid.unigeek.ui.components.Banner
 import run.xid.unigeek.ui.components.MonoLabel
 import run.xid.unigeek.ui.components.SectionLabel
 import run.xid.unigeek.ui.components.clickableNoRipple
@@ -88,8 +90,13 @@ fun RemoteScreen(conn: ConnectionViewModel) {
     val scroll = rememberScrollState()
     Column(Modifier.fillMaxWidth().verticalScroll(scroll).padding(horizontal = 20.dp, vertical = 16.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            SectionLabel("Remote · UART")
+            SectionLabel("Remote")
             if (caps != null) MonoLabel("${caps.width}×${caps.height}", size = 10, color = Geek.InkDim)
+        }
+
+        if (conn.kind == TransportKind.Ble) {
+            Spacer(Modifier.height(12.dp))
+            Banner("Screen mirror over Bluetooth is experimental — it may render only partially. Use USB-OTG for a complete mirror.", BadgeKind.Warn)
         }
 
         Spacer(Modifier.height(16.dp))
