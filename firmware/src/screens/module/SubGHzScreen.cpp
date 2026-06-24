@@ -9,6 +9,17 @@
 #include "ui/views/ProgressView.h"
 #include "utils/rf/KeeloqKeystore.h"
 
+// Detect Freq strength colouring. All recorded hits sit above RSSI_THRESHOLD
+// (-65 dBm); split that detected band into strong (close) / medium / far.
+//   strong  >= -52 dBm → green
+//   medium  >= -60 dBm → yellow
+//   far      < -60 dBm → red
+static uint16_t detectStrengthColor(int rssi) {
+  if (rssi >= -52) return TFT_GREEN;
+  if (rssi >= -60) return TFT_YELLOW;
+  return TFT_RED;
+}
+
 void SubGHzScreen::onInit() {
   _csPin   = PinConfig.get(PIN_CONFIG_CC1101_CS,   PIN_CONFIG_CC1101_CS_DEFAULT).toInt();
   _gdo0Pin = PinConfig.get(PIN_CONFIG_CC1101_GDO0, PIN_CONFIG_CC1101_GDO0_DEFAULT).toInt();
@@ -91,7 +102,7 @@ void SubGHzScreen::_updateSublabels() {
   } else {
     _mfcodesSub = "not loaded";
   }
-  _menuItems[5].sublabel = _mfcodesSub.c_str();
+  _menuItems[6].sublabel = _mfcodesSub.c_str();
 }
 
 void SubGHzScreen::_reloadMfcodes() {
@@ -119,7 +130,11 @@ void SubGHzScreen::_onMenuSelected(uint8_t index) {
       _startScan();
       return;
     }
-    case 2: { // Receive
+    case 2: { // Waterfall
+      _startWaterfall();
+      return;
+    }
+    case 3: { // Receive
       if (_csPin < 0 || _gdo0Pin < 0) {
         ShowStatusAction::show("Set CS and GDO0 pins first");
         render();
@@ -133,7 +148,7 @@ void SubGHzScreen::_onMenuSelected(uint8_t index) {
       _enterReceiveMode();
       return;
     }
-    case 3: { // Send
+    case 4: { // Send
       if (_csPin < 0) {
         ShowStatusAction::show("Set CS pin first");
         render();
@@ -142,11 +157,11 @@ void SubGHzScreen::_onMenuSelected(uint8_t index) {
       _enterBrowseMode();
       return;
     }
-    case 5: { // Mfcodes — reload + status popup
+    case 6: { // Mfcodes — reload + status popup
       _reloadMfcodes();
       return;
     }
-    case 4: { // Jammer
+    case 5: { // Jammer
       if (_csPin < 0 || _gdo0Pin < 0) {
         ShowStatusAction::show("Set CS and GDO0 pins first");
         render();
@@ -212,6 +227,7 @@ void SubGHzScreen::_startScan() {
     return;
   }
   _rfDetectFired = false;
+  _clearHistory();
   _rf.beginScan();
   _state = STATE_SCANNING;
   _chromeDrawn = false;
@@ -220,6 +236,7 @@ void SubGHzScreen::_startScan() {
 }
 
 bool SubGHzScreen::_onUpdateExtra() {
+  if (_state == STATE_WATERFALL) return _onUpdateWaterfall();
   if (_state != STATE_SCANNING) return false;
   if (Uni.Nav->wasPressed()) {
     auto dir = Uni.Nav->readDirection();
@@ -230,17 +247,20 @@ bool SubGHzScreen::_onUpdateExtra() {
       return true;
     }
   }
-  _rf.stepScan();
-  if (!_rfDetectFired && _rf.getScanRssi() > CC1101Util::RSSI_THRESHOLD) {
-    _rfDetectFired = true;
-    int n = Achievement.inc("rf_detect_freq");
-    if (n == 1) Achievement.unlock("rf_detect_freq");
+  if (_rf.stepScan()) {  // signal above RSSI_THRESHOLD at the current frequency
+    if (!_rfDetectFired) {
+      _rfDetectFired = true;
+      int n = Achievement.inc("rf_detect_freq");
+      if (n == 1) Achievement.unlock("rf_detect_freq");
+    }
+    _recordHit(_rf.getScanFreq(), _rf.getScanRssi());
   }
   render();
   return true;
 }
 
 bool SubGHzScreen::_onRenderExtra() {
+  if (_state == STATE_WATERFALL) return _onRenderWaterfall();
   if (_state != STATE_SCANNING) return false;
   auto& lcd = Uni.Lcd;
 
@@ -248,11 +268,15 @@ bool SubGHzScreen::_onRenderExtra() {
   static constexpr int kRssiCeiling = -30;
   static constexpr int kRssiRange   = kRssiCeiling - kRssiFloor; // 80
 
-  const int footerH = 16;
-  const int infoH   = 26;
-  const int contentH = bodyH() - footerH;
-  const int chartY   = infoH;
-  const int chartH   = contentH - infoH;
+  const int footerH   = 16;
+  const int infoH     = 14;                     // live freq/rssi row
+  const int histLineH = 9;
+  const int histH     = histLineH * (kHistMax + 1); // "Recent:" header + 5 rows
+  const int contentH  = bodyH() - footerH;
+  const int chartY    = infoH;
+  int chartBottom     = contentH - histH;
+  if (chartBottom < chartY + 8) chartBottom = chartY + 8; // keep a chart sliver
+  const int chartH    = chartBottom - chartY;
 
   if (!_chromeDrawn) {
     lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
@@ -272,18 +296,12 @@ bool SubGHzScreen::_onRenderExtra() {
   int barW  = bodyW() / (n ? n : 1);
   if (barW < 1) barW = 1;
 
-  uint8_t bestIdx  = 0;
-  int     bestRssi = -120;
-  for (uint8_t i = 0; i < n; i++) {
-    int r = _rf.getScanRssiAt(i);
-    if (r > bestRssi) { bestRssi = r; bestIdx = i; }
-  }
-
   Sprite sp(&lcd);
   sp.createSprite(bodyW(), contentH);
   sp.fillSprite(TFT_BLACK);
   sp.setTextSize(1);
 
+  // Live RSSI bar chart across all scanned channels.
   for (uint8_t i = 0; i < n; i++) {
     int rssi    = _rf.getScanRssiAt(i);
     int clamped = constrain(rssi, kRssiFloor, kRssiCeiling);
@@ -292,14 +310,14 @@ bool SubGHzScreen::_onRenderExtra() {
     int y       = chartY + chartH - barH;
 
     uint16_t color;
-    if (i == bestIdx && rssi > CC1101Util::RSSI_THRESHOLD)     color = TFT_YELLOW;
-    else if (rssi > CC1101Util::RSSI_THRESHOLD)                color = TFT_GREEN;
-    else if (rssi > kRssiFloor + 10)                           color = 0x2945;
-    else                                                       color = TFT_DARKGREY;
+    if (rssi > CC1101Util::RSSI_THRESHOLD)        color = detectStrengthColor(rssi);
+    else if (rssi > kRssiFloor + 10)              color = 0x2945;
+    else                                          color = TFT_DARKGREY;
 
     if (barH > 0) sp.fillRect(x, y, barW - 1, barH, color);
   }
 
+  // Marker on the channel currently being sampled.
   for (uint8_t i = 0; i < n; i++) {
     if (fabsf(_rf.getScanFreqAt(i) - _rf.getScanFreq()) < 0.01f) {
       sp.drawFastVLine(i * barW + barW / 2, chartY, chartH, TFT_WHITE);
@@ -307,28 +325,44 @@ bool SubGHzScreen::_onRenderExtra() {
     }
   }
 
+  // Live readout: current scan frequency (left) + current RSSI (right).
   sp.setTextDatum(ML_DATUM);
   sp.setTextColor(TFT_WHITE, TFT_BLACK);
   char freqBuf[20];
   snprintf(freqBuf, sizeof(freqBuf), "%.3f MHz", _rf.getScanFreq());
-  sp.drawString(freqBuf, 2, 7);
+  sp.drawString(freqBuf, 2, infoH / 2);
 
   sp.setTextDatum(MR_DATUM);
   char rssiBuf[16];
   snprintf(rssiBuf, sizeof(rssiBuf), "%d dBm", _rf.getScanRssi());
   uint16_t rssiColor = (_rf.getScanRssi() > CC1101Util::RSSI_THRESHOLD) ? TFT_GREEN : TFT_CYAN;
   sp.setTextColor(rssiColor, TFT_BLACK);
-  sp.drawString(rssiBuf, bodyW() - 2, 7);
+  sp.drawString(rssiBuf, bodyW() - 2, infoH / 2);
 
+  // History panel: last 5 detections, most-recent first (persists after the
+  // signal disappears, unlike the live chart).
+  const int histTop = contentH - histH;
   sp.setTextDatum(ML_DATUM);
-  if (bestRssi > CC1101Util::RSSI_THRESHOLD) {
-    sp.setTextColor(TFT_YELLOW, TFT_BLACK);
-    char bestBuf[28];
-    snprintf(bestBuf, sizeof(bestBuf), "> %.3f MHz %ddBm", _rf.getScanFreqAt(bestIdx), bestRssi);
-    sp.drawString(bestBuf, 2, 19);
-  } else {
-    sp.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    sp.drawString("No signal", 2, 19);
+  sp.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  sp.drawString("Recent:", 2, histTop + histLineH / 2 + 1);
+
+  for (uint8_t i = 0; i < kHistMax; i++) {
+    int ry = histTop + histLineH * (i + 1) + histLineH / 2 + 1;
+    if (i < _histCount) {
+      sp.setTextColor(detectStrengthColor(_hist[i].rssi), TFT_BLACK);
+      char fb[16];
+      snprintf(fb, sizeof(fb), "%.3f MHz", _hist[i].freq);
+      sp.setTextDatum(ML_DATUM);
+      sp.drawString(fb, 2, ry);
+      char rb[12];
+      snprintf(rb, sizeof(rb), "%d dBm", _hist[i].rssi);
+      sp.setTextDatum(MR_DATUM);
+      sp.drawString(rb, bodyW() - 2, ry);
+    } else {
+      sp.setTextColor(0x2945, TFT_BLACK);
+      sp.setTextDatum(ML_DATUM);
+      sp.drawString("--", 2, ry);
+    }
   }
 
   sp.pushSprite(bodyX(), bodyY());
@@ -336,10 +370,197 @@ bool SubGHzScreen::_onRenderExtra() {
   return true;
 }
 
+void SubGHzScreen::_recordHit(float freq, int rssi) {
+  uint32_t now = millis();
+  // Dedup across ALL slots, not just the top: the sweep visits every channel,
+  // so two simultaneous strong signals (e.g. 433.92 + 868.35) alternate as the
+  // newest hit. Checking only slot 0 let them flood the list with duplicate
+  // rows. Refreshing the existing slot in place (keeping its peak RSSI, no
+  // reordering) keeps the list stable — it only grows with genuinely new
+  // frequencies.
+  for (uint8_t i = 0; i < _histCount; i++) {
+    if (fabsf(_hist[i].freq - freq) < 0.01f) {
+      if (rssi > _hist[i].rssi) _hist[i].rssi = rssi;
+      _hist[i].when = now;
+      return;
+    }
+  }
+  for (int i = (_histCount < kHistMax ? _histCount : kHistMax - 1); i > 0; i--)
+    _hist[i] = _hist[i - 1];
+  _hist[0] = { freq, rssi, now };
+  if (_histCount < kHistMax) _histCount++;
+}
+
 bool SubGHzScreen::_onBackExtra() {
+  if (_state == STATE_WATERFALL) {
+    _rf.endRssiSweep();
+    _rf.end();
+    _showMenu();
+    return true;
+  }
   if (_state != STATE_SCANNING) return false;
   _rf.endScan();
   _rf.end();
   _showMenu();
   return true;
 }
+
+// ── Waterfall: RSSI spectrogram ─────────────────────────────────────────────
+
+// Dark-floor heat ramp: weak/no-signal ≈ black, ramping blue → green → red as
+// the signal gets stronger, so real activity stands out against a dark
+// background (an inverted map would paint the noise floor solid green).
+uint16_t SubGHzScreen::_waterfallColor(int rssi) {
+  int level = map(constrain(rssi, -100, -35), -100, -35, 0, 255);  // 0 weak .. 255 strong
+  uint8_t r, g, b;
+  if (level < 64) {            // black → blue
+    r = 0;   g = 0;                    b = level * 4;
+  } else if (level < 128) {    // blue → green
+    r = 0;   g = (level - 64) * 4;     b = 255 - (level - 64) * 4;
+  } else if (level < 192) {    // green → yellow
+    r = (level - 128) * 4; g = 255;    b = 0;
+  } else {                     // yellow → red
+    r = 255; g = 255 - (level - 192) * 4; b = 0;
+  }
+  return Uni.Lcd.color565(r, g, b);
+}
+
+void SubGHzScreen::_pickWaterfallFreq(float& boundary) {
+  static constexpr InputSelectAction::Option freqOpts[] = {
+    {"300.00 MHz", "300"},    {"315.00 MHz", "315"},    {"345.00 MHz", "345"},
+    {"390.00 MHz", "390"},    {"433.00 MHz", "433"},    {"433.92 MHz", "433.92"},
+    {"434.00 MHz", "434"},    {"435.00 MHz", "435"},    {"438.00 MHz", "438"},
+    {"868.00 MHz", "868"},    {"868.35 MHz", "868.35"}, {"915.00 MHz", "915"},
+  };
+  char cur[12];
+  snprintf(cur, sizeof(cur), "%.2f", boundary);
+  const char* c = InputSelectAction::popup("Frequency", freqOpts, 12, cur);
+  if (c) boundary = atof(c);
+}
+
+void SubGHzScreen::_startWaterfall() {
+  if (_csPin < 0 || _gdo0Pin < 0) {
+    ShowStatusAction::show("Set CS and GDO0 pins first");
+    render();
+    return;
+  }
+
+  // Band-select loop: Start Waterfall / Start Freq / End Freq / Back.
+  while (true) {
+    char startLbl[24], endLbl[24];
+    snprintf(startLbl, sizeof(startLbl), "Start: %.2f MHz", _wfStart);
+    snprintf(endLbl,   sizeof(endLbl),   "End:   %.2f MHz", _wfEnd);
+    InputSelectAction::Option opts[4] = {
+      {"Start Waterfall", "run"},
+      {startLbl,          "start"},
+      {endLbl,            "end"},
+      {"Back",            "back"},
+    };
+    const char* c = InputSelectAction::popup("Waterfall", opts, 4);
+    if (!c || strcmp(c, "back") == 0) { render(); return; }
+    if (strcmp(c, "start") == 0)      { _pickWaterfallFreq(_wfStart); continue; }
+    if (strcmp(c, "end") == 0)        { _pickWaterfallFreq(_wfEnd);   continue; }
+    if (strcmp(c, "run") == 0)        { _runWaterfall(); return; }
+  }
+}
+
+void SubGHzScreen::_runWaterfall() {
+  if (_wfEnd < _wfStart) { float t = _wfStart; _wfStart = _wfEnd; _wfEnd = t; }
+  if (_wfEnd - _wfStart < 0.01f) _wfEnd = _wfStart + 0.01f;
+
+  if (!_rf.begin(Uni.Spi, _csPin, _gdo0Pin)) {
+    ShowStatusAction::show("CC1101 not found");
+    render();
+    return;
+  }
+  _rf.beginRssiSweep();
+
+  _wfLine      = 0;
+  _wfMaxRssi   = -120;
+  _wfMaxFreq   = _wfStart;
+  _wfLastMax   = millis();
+  _state       = STATE_WATERFALL;
+  _chromeDrawn = false;
+  strcpy(_titleBuf, "Waterfall");
+  render();
+}
+
+// Layout: header band (labels + max readout) on top, scrolling heat-map below.
+static constexpr int kWfHeaderH = 22;
+
+bool SubGHzScreen::_onUpdateWaterfall() {
+  if (Uni.Nav->wasPressed()) {
+    auto dir = Uni.Nav->readDirection();
+    if (dir == INavigation::DIR_BACK || dir == INavigation::DIR_PRESS) {
+      _rf.endRssiSweep();
+      _rf.end();
+      _showMenu();
+      return true;
+    }
+  }
+  render();  // each frame sweeps one fresh line (done in _onRenderWaterfall)
+  return true;
+}
+
+bool SubGHzScreen::_onRenderWaterfall() {
+  auto& lcd = Uni.Lcd;
+  const int w        = bodyW();
+  const int wfTop    = kWfHeaderH;            // body-relative y where heat-map starts
+  const int wfBottom = bodyH();
+  const int wfH      = wfBottom - wfTop;
+  if (wfH < 2) return true;
+
+  if (!_chromeDrawn) {
+    lcd.fillRect(bodyX(), bodyY(), bodyW(), bodyH(), TFT_BLACK);
+    _chromeDrawn = true;
+    _wfLine      = 0;
+  }
+
+  // Header: 4 frequency ticks across the band + control hint.
+  lcd.setTextSize(1);
+  lcd.setTextDatum(TL_DATUM);
+  for (int i = 0; i < 4; i++) {
+    int   x = i * (w / 4);
+    float f = _wfStart + (_wfEnd - _wfStart) * i / 4.0f;
+    lcd.drawFastVLine(bodyX() + x, bodyY() + wfTop, wfH, TFT_DARKGREY);
+    lcd.setTextColor(TFT_WHITE, TFT_BLACK);
+    char fb[10];
+    snprintf(fb, sizeof(fb), "%.2f", f);
+    lcd.drawString(fb, bodyX() + x + 1, bodyY() + 1);
+  }
+
+  // Sweep one line across the band into a 1px-tall sprite.
+  const float step = (_wfEnd - _wfStart) / (float)w;
+  int   lineMaxRssi = -120;
+  float lineMaxFreq = _wfStart;
+
+  Sprite line(&lcd);
+  line.createSprite(w, 1);
+  for (int x = 0; x < w; x++) {
+    float f    = _wfStart + x * step;
+    int   rssi = _rf.rssiAt(f);
+    if (rssi > lineMaxRssi) { lineMaxRssi = rssi; lineMaxFreq = f; }
+    line.drawPixel(x, 0, _waterfallColor(rssi));
+  }
+  line.pushSprite(bodyX(), bodyY() + wfTop + _wfLine);
+  line.deleteSprite();
+
+  if (lineMaxRssi > _wfMaxRssi) { _wfMaxRssi = lineMaxRssi; _wfMaxFreq = lineMaxFreq; }
+
+  // Peak readout (refreshed periodically).
+  if (millis() - _wfLastMax >= 1500) {
+    lcd.fillRect(bodyX(), bodyY() + 10, w, 10, TFT_BLACK);
+    lcd.setTextColor(TFT_YELLOW, TFT_BLACK);
+    char mb[28];
+    snprintf(mb, sizeof(mb), "%d dBm @ %.3f", _wfMaxRssi, _wfMaxFreq);
+    lcd.drawString(mb, bodyX() + 2, bodyY() + 10);
+    _wfMaxRssi = -120;
+    _wfLastMax = millis();
+  }
+
+  // Advance + wrap the waterfall cursor.
+  _wfLine++;
+  if (_wfLine >= wfH) _wfLine = 0;
+  return true;
+}
+

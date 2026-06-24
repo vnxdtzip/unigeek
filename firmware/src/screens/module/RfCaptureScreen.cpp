@@ -277,6 +277,14 @@ void RfCaptureScreen::_showReceiveList() {
            _titlePrefix(), _capturedCount, kMaxCapture);
   _rebuildCapturedItems();
   setCount(_capturedCount);
+  // When the list empties (e.g. all signals deleted), force a chrome redraw so
+  // the "Waiting for signal" screen returns instead of a stale/black list.
+  if (_capturedCount == 0) {
+    _chromeDrawn   = false;
+    _selectedIndex = 0;
+  } else if (_selectedIndex >= _capturedCount) {
+    _selectedIndex = _capturedCount - 1;
+  }
   render();
 }
 
@@ -489,10 +497,11 @@ void RfCaptureScreen::_loadBrowseDir(const String& path) {
     Uni.Storage->makeDir(path.c_str());
   }
 
-  // _browser.root confines the picker to kRootPath — ".." appears below
-  // the root but never resolves above it. BACK still works the same; this
-  // is just the in-list alternative.
-  _browser.root = kRootPath;
+  // Let the picker climb the whole card: a ".." row is shown whenever the
+  // loaded dir differs from root. Rooting at "/" means even the default
+  // kRootPath ("/unigeek/rf") gets a ".." so other .sub files on the SD card
+  // are reachable, not just this folder.
+  _browser.root = "/";
   uint8_t n = _browser.load(this, path, ".sub");
   setItems(_browser.items(), n);
 }
