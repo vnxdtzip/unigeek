@@ -156,6 +156,7 @@ export default function RemoteAccessClient() {
   const [errorMsg, setErrorMsg] = useState('');
   const [logLines, setLogLines] = useState([]);
   const [swap, setSwap] = useState(false);
+  const [transport, setTransport] = useState(null); // 'serial' | 'bluetooth' while connected
 
   const canvasRef = useRef(null);
   const ctx2dRef  = useRef(null);
@@ -259,11 +260,13 @@ export default function RemoteAccessClient() {
     capsRef.current = { touch: false, keyboard: false };
     setCaps({ touch: false, keyboard: false, w: 0, h: 0 });
     setStatus('idle');
+    setTransport(null);
   }, [writeFrame]);
 
   // Shared post-open setup: start mirroring and watch for a silent device.
   const _beginSession = useCallback((kind) => {
     setStatus('connected');
+    setTransport(kind);
     log(`connected · ${kind === 'bluetooth' ? 'BLE NUS' : 'USB 115200'}`);
     // Begin mirroring immediately — the device replies with HELLO then frames.
     gotHelloRef.current = false;
@@ -537,6 +540,12 @@ export default function RemoteAccessClient() {
       </div>
 
       {errorMsg && <div className="fm-banner fm-banner-err">{errorMsg}</div>}
+
+      {transport === 'bluetooth' && (
+        <div className="fm-banner fm-banner-warn">
+          Screen mirror over Bluetooth is experimental — it may render only partially. Use USB for a complete mirror.
+        </div>
+      )}
 
       <div className="ra-stage">
         <canvas
