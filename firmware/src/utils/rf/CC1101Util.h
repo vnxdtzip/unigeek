@@ -87,6 +87,20 @@ public:
   int  rssiAt(float mhz);
   void endRssiSweep();
 
+  // ── Frequency analyzer (Flipper-style "peaky" peak detect) ────────────────
+  // Call analyzeStep() once per frame. Each call runs a full coarse sweep
+  // across the whole band (wide RxBW — also fills the RSSI map that drives the
+  // bar chart) then, if the strongest channel passes kAnalyzerTrigger, a fine
+  // refine (narrow RxBW, ±0.3 MHz @ 20 kHz) to pin the exact frequency. The
+  // last peak is held for kAnalyzerHold frames after the signal disappears so
+  // it stays on screen instead of vanishing the instant the carrier drops.
+  void  beginAnalyze();
+  bool  analyzeStep();                       // true while a peak is held
+  void  endAnalyze();
+  float getPeakFreq() const { return _peakFreq; }   // MHz, 0 if none held
+  int   getPeakRssi() const { return _peakRssi; }
+  bool  isPeakLive()  const { return _peakLive; }    // true = present right now
+
   // Scan status (still readable — updated during receive/scan)
   bool  isScanning()   const { return _scanning; }
   float getScanFreq()  const { return _scanFreq; }
@@ -110,6 +124,9 @@ public:
   static String saveToString(const Signal& sig);
 
   // Display helpers
+  // Friendly name for an RcSwitch protocol number (preset), or nullptr when the
+  // protocol has no well-known chip name (the generic table entries 2-5).
+  static const char* rcSwitchProtoName(int proto);
   static String signalLabel(const Signal& sig);
   // Multi-line, key:value info block (mirrors Bruce's `display_signal_data`).
   // Ready to feed into TextScrollView::setContent.
@@ -131,8 +148,18 @@ private:
   uint8_t _scanIdx  = 0;
   int     _scanRssiMap[kScanFreqCount];
 
+  // Frequency analyzer (peak detect + sample-hold)
+  static constexpr int     kAnalyzerTrigger = -75;  // dBm; coarse peak must exceed
+  static constexpr uint8_t kAnalyzerHold    = 16;   // frames to hold after signal stops
+  float   _peakFreq = 0;
+  int     _peakRssi = -120;
+  bool    _peakLive = false;
+  uint8_t _holdCtr  = 0;
+
   float _scanForBestFreq(std::function<bool()> cancelCb);
   void  _initTx();
   void  _initRx();
   void  _sendRcSwitch(const Signal& sig);
+  // Fill `out` from the current RCSwitch decode (incl. KeeLoq proto-23 unpack).
+  void  _fillRcSwitch(Signal& out);
 };

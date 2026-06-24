@@ -355,9 +355,21 @@ void RfCaptureScreen::_rebuildCapturedItems() {
       snprintf(buf, sizeof(buf), "%s cnt=%u", sig.mf_name.c_str(), sig.cnt);
       _capturedSubLabels[i] = buf;
     } else if (sig.protocol == "RcSwitch") {
-      char buf[32];
-      snprintf(buf, sizeof(buf), "0x%llX P%s %db",
-               (unsigned long long)sig.key, sig.preset.c_str(), sig.bit);
+      // Show the chip/remote name when known (e.g. "HT6P20B"), else "Pxx".
+      const char* pname = CC1101Util::rcSwitchProtoName(sig.preset.toInt());
+      char buf[48];
+      if (pname)
+        snprintf(buf, sizeof(buf), "%s 0x%llX %db",
+                 pname, (unsigned long long)sig.key, sig.bit);
+      else
+        snprintf(buf, sizeof(buf), "P%s 0x%llX %db",
+                 sig.preset.c_str(), (unsigned long long)sig.key, sig.bit);
+      _capturedSubLabels[i] = buf;
+    } else if (sig.protocol != "RAW" && sig.bit > 0) {
+      // Brand-decoded (CAME, Holtek, Linear, ...) — show the protocol name + key.
+      char buf[40];
+      snprintf(buf, sizeof(buf), "%s 0x%llX %db",
+               sig.protocol.c_str(), (unsigned long long)sig.key, sig.bit);
       _capturedSubLabels[i] = buf;
     } else {
       int pulses = 0;
