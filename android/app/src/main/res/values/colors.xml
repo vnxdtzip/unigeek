@@ -1,0 +1,6 @@
+<resources>
+    <!-- Engineering-dark base — mirrors the website bg / accent tokens. -->
+    <color name="bg">#FF0B0D0E</color>
+    <color name="accent">#FF35E08A</color>
+    <color name="ic_launcher_background">#FF0B0D0E</color>
+</resources>

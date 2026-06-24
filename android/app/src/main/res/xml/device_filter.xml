@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- USB-UART bridges used by ESP32 dev boards. VID/PID match the web flasher's USB_FILTERS. -->
+<resources>
+    <usb-device vendor-id="4292" product-id="60000" />   <!-- 0x10C4 / 0xEA60  CP2102 -->
+    <usb-device vendor-id="1027" product-id="24592" />   <!-- 0x0403 / 0x6010  FT2232H -->
+    <usb-device vendor-id="1027" product-id="24577" />   <!-- 0x0403 / 0x6001  FT232R -->
+    <usb-device vendor-id="12346" product-id="4097" />   <!-- 0x303A / 0x1001  Espressif JTAG -->
+    <usb-device vendor-id="12346" product-id="2" />      <!-- 0x303A / 0x0002  Espressif CDC -->
+    <usb-device vendor-id="6790" product-id="21972" />   <!-- 0x1A86 / 0x55D4  CH9102F -->
+    <usb-device vendor-id="6790" product-id="29987" />   <!-- 0x1A86 / 0x7523  CH340T -->
+</resources>
