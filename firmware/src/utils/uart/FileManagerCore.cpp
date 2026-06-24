@@ -1,6 +1,6 @@
 #include "utils/uart/FileManagerCore.h"
 #include "core/Device.h"
-#include "FirmwareVersion.h"
+#include "utils/FirmwareInfo.h"
 
 void FileManagerCore::reset() {
   resetParser();
@@ -58,8 +58,9 @@ void FileManagerCore::_handleInfo(uint8_t seq) {
   uint32_t heap  = (uint32_t)ESP.getFreeHeap();
   char buf[256];
   int n = snprintf(buf, sizeof(buf),
-    "{\"name\":\"UniGeek\",\"version\":\"%s\",\"total\":%llu,\"used\":%llu,\"heap\":%u}",
+    "{\"name\":\"UniGeek\",\"version\":\"%s\",\"board\":\"%s\",\"total\":%llu,\"used\":%llu,\"heap\":%u}",
     FIRMWARE_VERSION,
+    FIRMWARE_BOARD,
     (unsigned long long)total,
     (unsigned long long)used,
     (unsigned)heap);

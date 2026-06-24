@@ -17,6 +17,10 @@ if installed_version != EXPECTED_PLATFORM_VERSION:
     )
     env.Exit(1)
 
+# Expose the PlatformIO env name (== board id, e.g. "m5_cardputer") to the firmware
+# as FIRMWARE_BOARD so the UART/BLE INFO response can report which board is running.
+env.Append(CPPDEFINES=[("FIRMWARE_BOARD", env.StringifyMacro(env["PIOENV"]))])
+
 FRAMEWORK_DIR = env.PioPlatform().get_package_dir("framework-arduinoespressif32")
 board_mcu = env.BoardConfig()
 mcu = board_mcu.get("build.mcu", "esp32s3")
